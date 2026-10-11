@@ -1,0 +1,19 @@
+[package]
+name = "issue-tracker-front"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+command-utils.workspace = true
+dotenvy = "0.15"
+issue-tracker-app = { path = "../issue-tracker-app" }
+issue-tracker-infra = { path = "../issue-tracker-infra" }
+issue-tracker-proto = { path = "../issue-tracker-proto" }
+tokio.workspace = true
+tonic.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

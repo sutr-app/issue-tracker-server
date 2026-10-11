@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package issue_tracker.manager.v1;
+
+import "manager/v1/issue_tracker_manager_common.proto";
+
+// Configures a manager instance and the bounds applied to its requests.
+message IssueTrackerManagerSettings {
+  // Filesystem root that owns this manager's durable state.
+  string data_root = 1;
+  // Expected API contract and schema identities; activation fails on mismatch.
+  string expected_contract_fingerprint = 2;
+  string expected_schema_fingerprint = 3;
+  // Default and upper bound for a requested result page size.
+  uint32 default_page_size = 4;
+  uint32 maximum_page_size = 5;
+  // Upper bounds enforced for a single payload and repeated-field item count.
+  uint64 maximum_payload_bytes = 6;
+  uint64 maximum_repeated_item_count = 7;
+  // Lease durations for durable operations and outbox delivery, in milliseconds.
+  TimeSpan operation_lease = 8;
+  TimeSpan outbox_lease = 9;
+  // Per-value limits and retry policy used when processing manager requests.
+  ManagerResourceLimits resource_limits = 10;
+  RetryBudget retry_budget = 11;
+  // Expected identities for every store participating in this manager instance.
+  repeated StoreIdentity store_identities = 12;
+  // UNSPECIFIED and DISABLED are rejected; only FAIL_CLOSED is permitted.
+  SecretFilterMode secret_filter_mode = 13;
+  // Maximum inclusive root-wide operation-history time window. Absent values
+  // use the server default of ninety days.
+  TimeSpan root_operation_history_max_window = 14;
+  // During migration, accept legacy manager-page-v1 operation-history tokens.
+  // An absent value is treated as enabled for backwards compatibility.
+  optional bool operation_history_v1_compat_enabled = 15;
+}
+
+// Controls how detected secrets in manager input are handled.
+enum SecretFilterMode {
+  SECRET_FILTER_MODE_UNSPECIFIED = 0;
+  SECRET_FILTER_MODE_DISABLED = 1;
+  SECRET_FILTER_MODE_FAIL_CLOSED = 2;
+}
+
+// Size limits enforced for individual values accepted by the manager.
+message ManagerResourceLimits {
+  // Byte limits for string, issue body, and URI values respectively.
+  uint64 max_string_bytes = 1;
+  uint64 max_body_bytes = 2;
+  uint64 max_uri_bytes = 3;
+  uint64 max_repeated_item_count = 4;
+  uint64 max_page_size = 5;
+}
+// Bounds retry attempts and exponential backoff for retryable work.
+message RetryBudget {
+  // Maximum attempts, and the minimum and maximum backoff durations.
+  uint32 max_attempts = 1;
+  TimeSpan base_backoff = 2;
+  TimeSpan max_backoff = 3;
+}

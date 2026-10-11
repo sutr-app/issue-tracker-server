@@ -1,0 +1,53 @@
+[package]
+name = "issue-tracker-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/facade.rs"
+
+[dependencies]
+issue-tracker-app = { path = "crates/issue-tracker-app" }
+issue-tracker-proto = { path = "crates/issue-tracker-proto" }
+
+[workspace]
+members = [
+    "crates/issue-tracker-proto",
+    "crates/issue-tracker-app",
+    "crates/issue-tracker-infra",
+    "crates/issue-tracker-front",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/sutr-app/issue-tracker-server"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1"
+command-utils = { git = "https://github.com/sutr-app/command-utils.git", branch = "main" }
+async-trait = "0.1"
+fs2 = "0.4"
+prost = "0.14"
+prost-types = "0.14"
+rusqlite = { version = "0.39", features = ["bundled"] }
+schemars = "1.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+unicode-normalization = "0.1"
+taskchampion = { version = "=3.1.0", default-features = false, features = ["storage-sqlite", "bundled"] }
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+toml = "0.8"
+tonic = "0.14"
+tonic-prost = "0.14"
+tonic-reflection = "0.14"
+uuid = { version = "1", features = ["v4", "v5", "serde"] }

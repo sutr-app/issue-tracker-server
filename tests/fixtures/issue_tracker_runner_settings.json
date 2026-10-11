@@ -1,0 +1,28 @@
+{
+  "expected_contract_fingerprint": "sha256:1985f3a3e0cb1a329742f888dde93e9b38a9080b3a0958888153b27b96d518e4",
+  "expected_storage_schema_fingerprint": "sha256:1adb451456ad2ac4a209539193e8ba8a9defbad7ce83cf33fddadc3761b985ed",
+  "lease_policy": {
+    "default_lease_millis": 30000,
+    "minimum_lease_millis": 10000,
+    "maximum_lease_millis": 60000,
+    "maximum_heartbeat_interval_millis": 1000
+  },
+  "pagination_policy": {
+    "default_page_size": 50,
+    "maximum_page_size": 100
+  },
+  "resource_limits": {
+    "max_string_bytes": 4096,
+    "max_body_bytes": 65536,
+    "max_uri_bytes": 4096,
+    "max_token_bytes": 4096,
+    "max_handle_bytes": 4096,
+    "max_repeated_item_count": 100,
+    "max_export_bytes": 1048576,
+    "max_export_item_count": 10000,
+    "max_artifact_bytes": 1048576,
+    "max_artifact_count": 100,
+    "max_total_count_scan_items": 10000
+  }
+}
+

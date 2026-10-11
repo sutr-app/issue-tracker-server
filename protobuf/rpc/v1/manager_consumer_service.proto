@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package issue_tracker.rpc.v1;
+
+import "manager/v1/issue_tracker_manager_methods.proto";
+
+// Trusted-consumer/API-gateway boundary exposed by the primary listener.
+// It exposes only the Phase 5/6 consumer operations required by agent-app and
+// extraction automation. Worker lease operations remain exclusive to the
+// Gateway-bound endpoint, so its registered work-eligibility policy cannot be
+// bypassed.
+service ManagerConsumerService {
+  rpc ResolveCandidate(issue_tracker.manager.v1.ResolveCandidateArgs) returns (issue_tracker.manager.v1.ResolveCandidateResult);
+  rpc GetOperation(issue_tracker.manager.v1.GetOperationArgs) returns (issue_tracker.manager.v1.GetOperationResult);
+  rpc ListOperationHistory(issue_tracker.manager.v1.ListOperationHistoryArgs) returns (issue_tracker.manager.v1.ListOperationHistoryResult);
+  rpc ListOwnershipDiagnostics(issue_tracker.manager.v1.ListOwnershipDiagnosticsArgs) returns (issue_tracker.manager.v1.ListOwnershipDiagnosticsResult);
+  rpc GetIssueWithSync(issue_tracker.manager.v1.GetIssueWithSyncArgs) returns (issue_tracker.manager.v1.GetIssueWithSyncResult);
+  rpc GetIssueRelations(issue_tracker.manager.v1.GetIssueRelationsArgs) returns (issue_tracker.manager.v1.GetIssueRelationsResult);
+  rpc ListIssuesWithSync(issue_tracker.manager.v1.ListIssuesWithSyncArgs) returns (issue_tracker.manager.v1.ListIssuesWithSyncResult);
+  rpc GetCandidate(issue_tracker.manager.v1.GetCandidateArgs) returns (issue_tracker.manager.v1.GetCandidateResult);
+  rpc ListCandidates(issue_tracker.manager.v1.ListCandidatesArgs) returns (issue_tracker.manager.v1.ListCandidatesResult);
+  rpc ListReviewCandidates(issue_tracker.manager.v1.ListReviewCandidatesArgs) returns (issue_tracker.manager.v1.ListReviewCandidatesResult);
+  rpc UpdateCandidate(issue_tracker.manager.v1.UpdateCandidateArgs) returns (issue_tracker.manager.v1.UpdateCandidateResult);
+  rpc GetExtractionRun(issue_tracker.manager.v1.GetExtractionRunArgs) returns (issue_tracker.manager.v1.GetExtractionRunResult);
+  rpc ListExtractionRuns(issue_tracker.manager.v1.ListExtractionRunsArgs) returns (issue_tracker.manager.v1.ListExtractionRunsResult);
+  rpc CreateIssue(issue_tracker.manager.v1.CreateIssueArgs) returns (issue_tracker.manager.v1.CreateIssueResult);
+  rpc UpdateIssue(issue_tracker.manager.v1.UpdateIssueArgs) returns (issue_tracker.manager.v1.UpdateIssueResult);
+  rpc AddIssueRelation(issue_tracker.manager.v1.AddIssueRelationArgs) returns (issue_tracker.manager.v1.AddIssueRelationResult);
+  rpc TransitionIssue(issue_tracker.manager.v1.TransitionIssueArgs) returns (issue_tracker.manager.v1.TransitionIssueResult);
+  rpc ApplyIssueAdminAction(issue_tracker.manager.v1.ApplyIssueAdminActionArgs) returns (issue_tracker.manager.v1.ApplyIssueAdminActionResult);
+  rpc ResolveIssueOperation(issue_tracker.manager.v1.ResolveIssueOperationArgs) returns (issue_tracker.manager.v1.ResolveIssueOperationResult);
+}

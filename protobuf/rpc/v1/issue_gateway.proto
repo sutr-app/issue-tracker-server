@@ -1,0 +1,159 @@
+syntax = "proto3";
+
+package issue_tracker.rpc.v1;
+
+import "manager/v1/issue_tracker_manager_common.proto";
+import "v1/issue_tracker_common.proto";
+
+// Worker-only facade exposed from a gateway-bound endpoint. The endpoint
+// determines the gateway identity and policy; requests cannot select either.
+// A gateway endpoint exposes only the worker lifecycle methods in this service.
+service IssueGateway {
+  rpc ListReady(IssueGatewayListReadyRequest) returns (IssueGatewayListReadyResponse);
+  rpc Claim(IssueGatewayClaimRequest) returns (IssueGatewayClaimResponse);
+  rpc Heartbeat(IssueGatewayHeartbeatRequest) returns (IssueGatewayMutationResponse);
+  rpc Release(IssueGatewayReleaseRequest) returns (IssueGatewayMutationResponse);
+  rpc Transition(IssueGatewayTransitionRequest) returns (IssueGatewayMutationResponse);
+  rpc CompleteExecutionToAwaitingReview(
+      IssueGatewayCompleteExecutionToAwaitingReviewRequest)
+      returns (IssueGatewayCompleteExecutionToAwaitingReviewResponse);
+}
+
+message GatewayPreconditionDetail {
+  enum PreconditionKind {
+    PRECONDITION_KIND_UNSPECIFIED = 0;
+    PRECONDITION_KIND_ISSUE_BLOCKED = 1;
+  }
+  PreconditionKind precondition_kind = 1;
+}
+
+message GatewayRevisionConflictDetail {
+  uint64 expected_revision = 1;
+  uint64 current_revision = 2;
+}
+
+message IssueGatewayError {
+  // Closed values include unconfirmed, precondition_failed,
+  // revision_conflict, and idempotency_conflict.
+  string code = 1;
+  string message = 2;
+  oneof detail {
+    GatewayPreconditionDetail precondition = 3;
+    GatewayRevisionConflictDetail revision_conflict = 4;
+  }
+}
+
+message IssueGatewayListReadyRequest {
+  uint32 page_size = 1;
+  optional string page_token = 2;
+}
+
+message IssueGatewayListReadyResponse {
+  oneof outcome {
+    issue_tracker.manager.v1.IssueWithSyncPage success = 1;
+    IssueGatewayError error = 2;
+  }
+}
+
+message IssueGatewayClaimRequest {
+  string issue_id = 1;
+  // Presence is required. Revision zero is a valid CAS value.
+  optional uint64 expected_revision = 2;
+  // Non-empty. May be replayed only for this same logical operation.
+  string idempotency_key = 3;
+}
+
+message IssueGatewayClaimed {
+  string issue_id = 1;
+  string capability_id = 2;
+  uint64 revision = 3;
+}
+
+message IssueGatewayClaimResponse {
+  oneof outcome {
+    IssueGatewayClaimed success = 1;
+    IssueGatewayError error = 2;
+  }
+}
+
+message IssueGatewayHeartbeatRequest {
+  string issue_id = 1;
+  string capability_id = 2;
+  // Presence is required. Revision zero is a valid CAS value.
+  optional uint64 expected_revision = 3;
+  // Non-empty. May be replayed only for this same logical operation.
+  string idempotency_key = 4;
+}
+
+message IssueGatewayReleaseRequest {
+  string issue_id = 1;
+  string capability_id = 2;
+}
+
+// Transitions only the canonical Issue lifecycle. A terminal transition does
+// not resolve or reclassify its source Candidate: an AUTO_REGISTERED Candidate
+// remains AUTO_REGISTERED so consumers can retain the fact that it was handled
+// without human review. Consumers derive whether it is still actionable for
+// review from the related Issue lifecycle and their own review policy.
+message IssueGatewayTransitionRequest {
+  string issue_id = 1;
+  issue_tracker.v1.IssueState target_state = 2;
+  // Required for every transition, regardless of target state.
+  string capability_id = 3;
+  // Presence is required. Revision zero is a valid CAS value.
+  optional uint64 expected_revision = 4;
+  // Non-empty. May be replayed only for this same logical operation.
+  string idempotency_key = 5;
+  oneof terminal_report {
+    issue_tracker.v1.CompletionReport completion = 6;
+    issue_tracker.v1.CancellationReport cancellation = 7;
+  }
+}
+
+message IssueGatewayMutation {
+  string issue_id = 1;
+  uint64 revision = 2;
+}
+
+message IssueGatewayMutationResponse {
+  oneof outcome {
+    IssueGatewayMutation success = 1;
+    IssueGatewayError error = 2;
+  }
+}
+
+// Completes one claimed execution into review. This is the only Gateway write
+// for AWAITING_REVIEW; `state_contract_version` is a deliberate opt-in gate for
+// consumers that understand the appended IssueState enum.
+message IssueGatewayCompleteExecutionToAwaitingReviewRequest {
+  string issue_id = 1;
+  // Opaque process-local capability returned by Claim. It is required for a new
+  // write; a completed identical idempotency request may replay without it.
+  string capability_id = 2;
+  // Presence is required. Revision zero is a valid CAS value.
+  optional uint64 expected_revision = 3;
+  // Non-empty and bound to the issue, run, report, commit, and references.
+  string idempotency_key = 4;
+  // Must equal `awaiting_review/v1`; older consumers cannot opt in implicitly.
+  string state_contract_version = 5;
+  issue_tracker.v1.AwaitingReviewCompletion completion = 6;
+}
+
+message IssueGatewayAwaitingReviewMutation {
+  string issue_id = 1;
+  // Canonical Issue revision after the transition.
+  uint64 revision = 2;
+  string run_id = 3;
+  string full_commit_id = 4;
+  repeated string evidence_references = 5;
+  // True only after the TaskChampion state/revision/history/evidence and full
+  // claim tuple were committed together.
+  bool lease_closed = 6;
+}
+
+message IssueGatewayCompleteExecutionToAwaitingReviewResponse {
+  oneof outcome {
+    IssueGatewayAwaitingReviewMutation success = 1;
+    IssueGatewayError error = 2;
+  }
+}

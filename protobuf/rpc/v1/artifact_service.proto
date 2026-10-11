@@ -1,0 +1,9 @@
+syntax = "proto3";
+package issue_tracker.rpc.v1;
+import "v1/issue_tracker_methods.proto";
+service ArtifactService {
+  rpc GetArtifact(issue_tracker.v1.GetArtifactArgs) returns (issue_tracker.v1.GetArtifactResult);
+  rpc ListArtifacts(issue_tracker.v1.ListArtifactsArgs) returns (issue_tracker.v1.ListArtifactsResult);
+  rpc CreateBackup(issue_tracker.v1.CreateBackupArgs) returns (issue_tracker.v1.CreateBackupResult);
+  rpc ExportIssues(issue_tracker.v1.ExportIssuesArgs) returns (issue_tracker.v1.ExportIssuesResult);
+}

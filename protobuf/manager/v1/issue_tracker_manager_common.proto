@@ -1,0 +1,1145 @@
+syntax = "proto3";
+
+package issue_tracker.manager.v1;
+
+import "v1/issue_tracker_common.proto";
+
+// An instant in UTC, represented as milliseconds since the Unix epoch.
+message UtcInstant { int64 unix_epoch_millis = 1; }
+// A duration represented in milliseconds.
+message TimeSpan { uint64 millis = 1; }
+// An extensible key/value metadata item.
+message MetadataEntry { string key = 1; string value = 2; }
+
+// Audit identity supplied by the consumer for a manager mutation.
+message ActorAudit {
+  string actor_id = 1;
+  issue_tracker.v1.ActorKind actor_kind = 2;
+  optional string display_name = 3;
+  optional string agent_session_id = 4;
+  optional string reason = 5;
+}
+// Read-scoped identifiers used for tracing and contract compatibility checks.
+message ManagerReadContext {
+  string correlation_id = 1;
+  string schema_fingerprint = 2;
+  string data_root_id = 3;
+  string contract_fingerprint = 4;
+  // Authentication and authorization belong to the consumer boundary.
+}
+// Write-scoped identifiers used for idempotency, auditing, and compatibility checks.
+message ManagerWriteContext {
+  // The server validates method and target against the invoked manager method and its
+  // canonical target before using them in the idempotency scope.
+  string method = 1;
+  string target = 2;
+  string schema_fingerprint = 3;
+  string idempotency_key = 4;
+  ActorAudit actor_audit = 5;
+  string correlation_id = 6;
+  string data_root_id = 7;
+  string contract_fingerprint = 8;
+  // Authentication and authorization belong to the consumer boundary.
+}
+
+// Requested page size and continuation token for a list operation.
+message PageRequest {
+  // Maximum number of items requested for this page.
+  uint32 page_size = 1;
+  optional string page_token = 2;
+  // Initial requests omit page_token. Continuations send only an opaque,
+  // integrity-protected token; snapshot fields are server-controlled.
+}
+// Stable ordering information captured when a paginated traversal begins.
+message StableTraversal { string order_fingerprint = 1; }
+// Server-controlled boundary that makes a paginated read consistent.
+message PageSnapshot {
+  uint64 read_revision_watermark = 1;
+  string snapshot_id = 2;
+  StableTraversal stable_traversal = 3;
+  // Tracked/durable manager writes advance the manager-global generation and manager_sequence; untracked phase-health telemetry writes do neither.
+  uint64 read_generation = 4;
+}
+// Pagination metadata returned with a result page.
+message PageInfo {
+  optional string next_page_token = 1;
+  optional uint64 total_size = 2;
+  uint64 read_revision = 3;
+  PageSnapshot snapshot = 4;
+}
+// Optional criteria for selecting candidate records.
+message CandidateFilter {
+  repeated CandidateStatus statuses = 1;
+  repeated CandidateKind kinds = 2;
+  repeated CandidatePriority priorities = 3;
+  optional string extraction_run_id = 4;
+  optional string text_query = 5;
+  // Matches a Candidate that has this exact source reference.
+  optional issue_tracker.v1.SourceEvidenceRef source_evidence = 6;
+}
+// Optional criteria for selecting extraction runs.
+message ExtractionRunFilter {
+  repeated ExtractionRunState states = 1;
+  optional string source = 2;
+  optional string request_schema = 3;
+}
+// Optional criteria for selecting backend issues with synchronization state.
+message IssueWithSyncFilter {
+  repeated SyncState sync_states = 1;
+  repeated string operation_ids = 2;
+  optional bool lookback_ready = 3;
+}
+
+// Lifecycle state of a candidate proposal.
+enum CandidateStatus {
+  CANDIDATE_STATUS_UNSPECIFIED = 0;
+  CANDIDATE_STATUS_PROPOSED = 1;
+  CANDIDATE_STATUS_ACCEPTED = 2;
+  CANDIDATE_STATUS_REJECTED = 3;
+  CANDIDATE_STATUS_SUPERSEDED = 4;
+  CANDIDATE_STATUS_AUTO_REGISTERED = 5;
+}
+// Category suggested for a candidate proposal.
+enum CandidateKind {
+  CANDIDATE_KIND_UNSPECIFIED = 0;
+  CANDIDATE_KIND_TASK = 1;
+  CANDIDATE_KIND_BUG = 2;
+  CANDIDATE_KIND_RESEARCH = 3;
+  CANDIDATE_KIND_DECISION = 4;
+}
+// Priority suggested for a candidate proposal, from P0 (highest) to P4.
+enum CandidatePriority {
+  CANDIDATE_PRIORITY_UNSPECIFIED = 0;
+  CANDIDATE_PRIORITY_P0 = 1;
+  CANDIDATE_PRIORITY_P1 = 2;
+  CANDIDATE_PRIORITY_P2 = 3;
+  CANDIDATE_PRIORITY_P3 = 4;
+  CANDIDATE_PRIORITY_P4 = 5;
+}
+// Initial issue state suggested by a candidate proposal.
+enum CandidateSuggestedState {
+  CANDIDATE_SUGGESTED_STATE_UNSPECIFIED = 0;
+  CANDIDATE_SUGGESTED_STATE_OPEN = 1;
+  CANDIDATE_SUGGESTED_STATE_IN_PROGRESS = 2;
+  CANDIDATE_SUGGESTED_STATE_BLOCKED = 3;
+  CANDIDATE_SUGGESTED_STATE_DEFERRED = 4;
+}
+// Strength of the evidence used to detect a candidate.
+enum DetectionBasis {
+  DETECTION_BASIS_UNSPECIFIED = 0;
+  DETECTION_BASIS_EXPLICIT = 1;
+  DETECTION_BASIS_STRONG = 2;
+  DETECTION_BASIS_INFERRED = 3;
+}
+// Model and rule evidence used to calculate a candidate confidence score.
+message ConfidenceFactor {
+  string model_id = 1;
+  string model_version = 2;
+  double score = 3;
+  double threshold = 4;
+  string rule_version = 5;
+  repeated ConfidenceRule rules = 6;
+}
+// Result of an individual confidence rule evaluation.
+message ConfidenceRule {
+  string name = 1;
+  bool passed = 2;
+  optional string explanation = 3;
+}
+// Outcome recorded when a candidate is decided.
+enum CandidateDecisionReason {
+  CANDIDATE_DECISION_REASON_UNSPECIFIED = 0;
+  CANDIDATE_DECISION_REASON_ACCEPTED = 1;
+  CANDIDATE_DECISION_REASON_REJECTED = 2;
+  CANDIDATE_DECISION_REASON_DUPLICATE = 3;
+  CANDIDATE_DECISION_REASON_SUPERSEDED = 4;
+}
+// Closed vocabulary for rejection decisions. The rationale carries the
+// bounded, human-readable explanation required for the audit record.
+enum CandidateRejectionReason {
+  CANDIDATE_REJECTION_REASON_UNSPECIFIED = 0;
+  CANDIDATE_REJECTION_REASON_DUPLICATE = 1;
+  CANDIDATE_REJECTION_REASON_INSUFFICIENT_EVIDENCE = 2;
+  CANDIDATE_REJECTION_REASON_NOT_ACTIONABLE = 3;
+  CANDIDATE_REJECTION_REASON_OUT_OF_SCOPE = 4;
+  CANDIDATE_REJECTION_REASON_WITHDRAWN = 5;
+  CANDIDATE_REJECTION_REASON_OTHER = 6;
+}
+// Input used to create a candidate proposal.
+message CandidateDraft {
+  // Caller-assigned identifier that remains stable across retries.
+  string candidate_id = 1;
+  string title = 2;
+  string description = 3;
+  CandidateKind kind = 4;
+  CandidatePriority suggested_priority = 5;
+  CandidateSuggestedState suggested_state = 6;
+  repeated string acceptance_criteria = 7;
+  DetectionBasis detection_basis = 8;
+  repeated ConfidenceFactor confidence_factors = 9;
+  // Source extraction run and revision from which this draft was produced.
+  string extraction_run_id = 10;
+  uint64 extraction_revision = 11;
+  repeated string duplicate_candidate_ids = 12;
+  repeated MetadataEntry metadata = 13;
+  optional UtcInstant due_at = 14;
+  repeated issue_tracker.v1.SourceEvidenceRef source_evidence = 15;
+}
+
+// Candidate fields addressable by revision-aware update operations.
+enum CandidateField {
+  CANDIDATE_FIELD_UNSPECIFIED = 0;
+  CANDIDATE_FIELD_TITLE = 1;
+  CANDIDATE_FIELD_DESCRIPTION = 2;
+  CANDIDATE_FIELD_KIND = 3;
+  CANDIDATE_FIELD_SUGGESTED_PRIORITY = 4;
+  CANDIDATE_FIELD_SUGGESTED_STATE = 5;
+  CANDIDATE_FIELD_ACCEPTANCE_CRITERIA = 6;
+  CANDIDATE_FIELD_DUE_AT = 7;
+  CANDIDATE_FIELD_SOURCE_EVIDENCE = 8;
+}
+// Values supplied for fields selected by a candidate update mask.
+message CandidatePatch {
+  optional string title = 1;
+  optional string description = 2;
+  optional CandidateKind kind = 3;
+  optional CandidatePriority suggested_priority = 4;
+  optional CandidateSuggestedState suggested_state = 5;
+  repeated string acceptance_criteria = 6;
+  // Selects either a replacement due date or explicit removal of it.
+  oneof due_at_change {
+    UtcInstant due_at = 7;
+    issue_tracker.v1.ClearField clear_due_at = 8;
+  }
+  repeated issue_tracker.v1.SourceEvidenceRef source_evidence = 9;
+}
+// Manager-owned issue fields addressable by revision-aware update operations.
+enum ManagerIssueField {
+  MANAGER_ISSUE_FIELD_UNSPECIFIED = 0;
+  MANAGER_ISSUE_FIELD_TITLE = 1;
+  MANAGER_ISSUE_FIELD_DESCRIPTION = 2;
+  MANAGER_ISSUE_FIELD_KIND = 3;
+  MANAGER_ISSUE_FIELD_PRIORITY = 4;
+  MANAGER_ISSUE_FIELD_LABELS = 5;
+  MANAGER_ISSUE_FIELD_ACCEPTANCE_CRITERIA = 6;
+  MANAGER_ISSUE_FIELD_CONTEXTS = 7;
+  MANAGER_ISSUE_FIELD_DUE_AT = 8;
+  MANAGER_ISSUE_FIELD_REVIEW_AT = 9;
+  MANAGER_ISSUE_FIELD_CONFIRMATION_STATUS = 10;
+  MANAGER_ISSUE_FIELD_PROVENANCE_METADATA = 11;
+  MANAGER_ISSUE_FIELD_SOURCE_EVIDENCE = 12;
+}
+// Values supplied for fields selected by an issue update mask.
+message ManagerIssuePatch {
+  optional string title = 1;
+  optional string description = 2;
+  optional issue_tracker.v1.IssueKind kind = 3;
+  optional issue_tracker.v1.IssuePriority priority = 4;
+  repeated string labels = 5;
+  repeated string acceptance_criteria = 6;
+  repeated issue_tracker.v1.ContextRef contexts = 7;
+  // Selects either a replacement due date or explicit removal of it.
+  oneof due_at_change {
+    UtcInstant due_at = 8;
+    issue_tracker.v1.ClearField clear_due_at = 9;
+  }
+  // Selects either a replacement review date or explicit removal of it.
+  oneof review_at_change {
+    UtcInstant review_at = 10;
+    issue_tracker.v1.ClearField clear_review_at = 11;
+  }
+  optional issue_tracker.v1.ConfirmationStatus confirmation_status = 12;
+  repeated MetadataEntry provenance_metadata = 13;
+  repeated issue_tracker.v1.SourceEvidenceRef source_evidence = 14;
+}
+// A persisted candidate proposal and its decision state.
+message Candidate {
+  string candidate_id = 1;
+  string title = 2;
+  string description = 3;
+  CandidateKind kind = 4;
+  CandidatePriority suggested_priority = 5;
+  CandidateSuggestedState suggested_state = 6;
+  repeated string acceptance_criteria = 7;
+  DetectionBasis detection_basis = 8;
+  repeated ConfidenceFactor confidence_factors = 9;
+  uint64 revision = 10;
+  string extraction_run_id = 11;
+  uint64 extraction_revision = 12;
+  repeated string duplicate_candidate_ids = 13;
+  CandidateStatus status = 14;
+  CandidateDecisionReason decision_reason = 15;
+  optional string decision_note = 16;
+  UtcInstant created_at = 17;
+  UtcInstant updated_at = 18;
+  repeated MetadataEntry metadata = 19;
+  // Identifies the candidate or issue that superseded this candidate.
+  oneof superseded_by {
+    string superseding_candidate_id = 20;
+    string superseding_issue_id = 21;
+  }
+  optional UtcInstant due_at = 22;
+  // Server-populated after ApplyExtraction evaluates STRONG. Callers cannot
+  // submit this through CandidateDraft.
+  optional StrongDetectionProof strong_detection_proof = 23;
+  repeated issue_tracker.v1.SourceEvidenceRef source_evidence = 24;
+}
+
+// Verification results required for a strongly detected candidate.
+message StrongDetectionProof {
+  string model_id = 1;
+  string model_version = 2;
+  string rule_version = 3;
+  double confidence = 4;
+  double threshold = 5;
+  repeated ConfidenceFactor confidence_factors = 6;
+  bool raw_memory_verified = 7;
+  bool unfinished_work_verified = 8;
+  bool no_duplicate_verified = 9;
+}
+// Lifecycle state of a candidate extraction run.
+enum ExtractionRunState {
+  EXTRACTION_RUN_STATE_UNSPECIFIED = 0;
+  EXTRACTION_RUN_STATE_CREATED = 1;
+  EXTRACTION_RUN_STATE_RUNNING = 2;
+  EXTRACTION_RUN_STATE_PAUSED = 3;
+  EXTRACTION_RUN_STATE_COMPLETED = 4;
+  EXTRACTION_RUN_STATE_FAILED = 5;
+  EXTRACTION_RUN_STATE_CANCELED = 6;
+  EXTRACTION_RUN_STATE_UNCONFIRMED = 7;
+}
+// Inclusive priority range used when evaluating auto-registration.
+message ExtractionPriorityRange {
+  CandidatePriority lower = 1;
+  CandidatePriority upper = 2;
+}
+// Immutable, normalized policy used to evaluate one extraction run.
+message ExtractionPolicy {
+  uint32 version = 1;
+  bool extraction_enabled = 2;
+  optional double auto_register_min_confidence = 3;
+  optional ExtractionPriorityRange auto_register_priority_range = 4;
+  bool explicit_only = 5;
+  repeated CandidateKind allowed_kinds = 6;
+  uint32 extract_cap = 7;
+}
+// Server-generated audit record for deterministic candidate truncation.
+message ExtractionTruncationRecord {
+  uint32 input_candidate_count = 1;
+  repeated uint32 adopted_input_indices = 2;
+  uint32 persisted_candidate_count = 3;
+  repeated ExtractionSuppressionRecord suppressions = 4;
+}
+// Closed reason vocabulary for inputs excluded before the extraction cap.
+enum ExtractionSuppressionReason {
+  EXTRACTION_SUPPRESSION_REASON_UNSPECIFIED = 0;
+  EXTRACTION_SUPPRESSION_REASON_REJECTED_EXACT_MATCH = 1;
+}
+// Immutable audit record of a deterministic suppression decision.
+message ExtractionSuppressionRecord {
+  ExtractionSuppressionReason reason = 1;
+  repeated uint32 input_candidate_indices = 2;
+  repeated string rejected_candidate_ids = 3;
+}
+// A persisted execution of candidate extraction from a source.
+message ExtractionRun {
+  string run_id = 1;
+  uint64 revision = 2;
+  ExtractionRunState state = 3;
+  string source = 4;
+  string request_digest = 5;
+  string request_schema = 6;
+  uint64 generation = 7;
+  optional string causal_parent = 8;
+  optional string error = 9;
+  optional string checkpoint = 10;
+  uint64 watermark = 11;
+  uint32 progress_percent = 12;
+  UtcInstant created_at = 13;
+  UtcInstant updated_at = 14;
+  // Immutable normalized policy snapshot used for this run.
+  ExtractionPolicy policy = 15;
+  string policy_digest = 16;
+  ExtractionTruncationRecord truncation = 17;
+}
+// Input used to start an extraction run.
+message ExtractionRunDraft {
+  string source = 1;
+  string request_digest = 2;
+  string request_schema = 3;
+  optional string causal_parent = 4;
+}
+// Requested lifecycle and progress update for an extraction run.
+message ExtractionRunAdvance {
+  ExtractionRunState target_state = 1;
+  optional uint32 progress_percent = 2;
+  optional string checkpoint = 3;
+  optional uint64 watermark = 4;
+  optional string error = 5;
+}
+
+// Manager mapping between a backend issue and its source candidate, if any.
+message IssueMapping {
+  string issue_id = 1;
+  optional string candidate_id = 2;
+  string backend_id = 3;
+  // Canonical backend Issue revision; a newly created backend Issue is 0.
+  uint64 revision = 4;
+  string backend_contract_fingerprint = 5;
+  string manager_contract_fingerprint = 6;
+  uint64 generation = 7;
+  UtcInstant created_at = 8;
+  UtcInstant updated_at = 9;
+}
+
+// Lifecycle state of a durable manager operation.
+enum DurableOperationState {
+  DURABLE_OPERATION_STATE_UNSPECIFIED = 0;
+  DURABLE_OPERATION_STATE_RECEIVED = 1;
+  DURABLE_OPERATION_STATE_PENDING = 2;
+  DURABLE_OPERATION_STATE_COMMITTED = 3;
+  DURABLE_OPERATION_STATE_FAILED = 4;
+  DURABLE_OPERATION_STATE_UNCONFIRMED = 5;
+  DURABLE_OPERATION_STATE_MANUAL_RESOLUTION = 6;
+  // The operation was closed by an explicitly authorized human arbitration.
+  // It is distinct from COMMITTED/FAILED because the historical outcome may
+  // remain uncertain and must not be presented as a server-proven result.
+  DURABLE_OPERATION_STATE_ARBITRATED = 7;
+}
+// Whether a failed durable operation may be retried automatically.
+enum FailureClass {
+  FAILURE_CLASS_UNSPECIFIED = 0;
+  FAILURE_CLASS_RETRYABLE = 1;
+  FAILURE_CLASS_TERMINAL = 2;
+}
+// Serialized result or error payload paired with its schema identifier.
+message Snapshot { bytes payload = 1; string schema = 2; }
+// Commit boundary retained for a durable manager operation.
+message ManagerCommitSnapshot {
+  string snapshot_id = 1;
+  string operation_id = 2;
+  uint64 manager_sequence = 3;
+  uint64 generation = 4;
+  string request_digest = 5;
+  string snapshot_digest = 6;
+  Snapshot snapshot = 7;
+  UtcInstant committed_at = 8;
+}
+// Persisted audit context for a durable manager operation.
+message ManagerOperationAudit {
+  string method = 1;
+  string target = 2;
+  string data_root_id = 3;
+  string contract_fingerprint = 4;
+  string schema_fingerprint = 5;
+  string idempotency_key = 6;
+  // Authentication credentials and identities are never persisted here.
+  ActorAudit actor_audit = 7;
+  string correlation_id = 8;
+  UtcInstant recorded_at = 9;
+  // Consumer authentication data is intentionally not part of this contract.
+}
+// A manager mutation persisted for retry, replay, and synchronization.
+message DurableOperation {
+  string operation_id = 1;
+  // Identifies the resource scope governed by this operation.
+  oneof scope {
+    string candidate_id = 2;
+    string evidence_id = 3;
+    string extraction_run_id = 4;
+    string issue_id = 5;
+  }
+  string method = 6;
+  string idempotency_scope = 7;
+  string request_digest = 8;
+  string request_schema = 9;
+  string downstream_operation_id = 10;
+  DurableOperationState state = 11;
+  FailureClass failure_class = 12;
+  uint32 attempt = 13;
+  uint64 manager_sequence = 14;
+  uint64 generation = 15;
+  optional string causal_parent = 16;
+  optional string superseded_by = 17;
+  bool affects_ready = 18;
+  optional string sync_subject = 19;
+  uint64 sync_subject_generation = 20;
+  repeated string affected_issue_ids = 21;
+  // Contains either the terminal success result or terminal error payload.
+  oneof terminal_snapshot {
+    Snapshot result_snapshot = 22;
+    Snapshot error_snapshot = 23;
+  }
+  bool resolution_required = 24;
+  UtcInstant created_at = 25;
+  UtcInstant updated_at = 26;
+  ManagerCommitSnapshot commit_snapshot = 27;
+  ManagerOperationAudit audit = 28;
+  issue_tracker.v1.OperationCommitDurability commit_durability = 29;
+  issue_tracker.v1.OperationResultReplayability result_replayability = 30;
+  // Safe diagnosis attached when the operation is quarantined. Payloads,
+  // lease handles, and credentials are never included in this message.
+  optional OperationDiagnosis diagnosis = 31;
+}
+
+// Proof that a native Tracker operation was read through the exact durable
+// Manager operation that owns its downstream idempotency key.
+message ManagerDownstreamOperationBinding {
+  string manager_operation_id = 1;
+  string issue_id = 2;
+  string downstream_operation_id = 3;
+  string manager_request_digest = 4;
+  string manager_request_schema = 5;
+}
+
+// Native operation marker paired with the immutable Manager row that selected
+// it. The marker is never returned for an unverified or mismatched binding.
+message TrustedDownstreamOperation {
+  issue_tracker.v1.OperationRecord operation = 1;
+  ManagerDownstreamOperationBinding binding = 2;
+}
+
+// Atomic manager state change and its optional operation result.
+message ManagerMutation {
+  // The entity snapshot changed by this mutation.
+  oneof entity {
+    Candidate candidate = 1;
+    ExtractionRun extraction_run = 2;
+    DurableOperation durable_operation = 3;
+    IssueMapping issue_mapping = 4;
+  }
+  DurableOperation operation = 5;
+  repeated ManagerEntityRevision entity_revisions = 6;
+  // Result returned for mutation types with a domain-specific success value.
+  oneof result {
+    CandidateAcceptanceResult candidate_acceptance = 7;
+    CandidateSupersedeResult candidate_supersede_result = 8;
+    // The lease handle is returned once and is never copied into operation
+    // snapshots or durable audit records.
+    ManagerClaimIssueSuccess claim_issue = 9;
+    IssueCreationResult issue_creation = 10;
+    IssueAdminActionResult issue_admin_action = 11;
+    IssueOperationResolutionResult issue_operation_resolution = 12;
+    // Non-secret result retained for ownership-bearing worker operations.
+    // Claim handles are intentionally never part of this message.
+    IssueOwnershipResult issue_ownership = 13;
+  }
+}
+
+// Immutable, non-secret result of a worker ownership operation.  This is
+// sufficient for GetOperation/manual resolution while keeping one-time claim
+// capabilities out of every durable snapshot and replay payload.
+message IssueOwnershipResult {
+  string method = 1;
+  string issue_id = 2;
+  issue_tracker.v1.IssueState resulting_state = 3;
+  uint64 resulting_revision = 4;
+  optional issue_tracker.v1.Issue current = 5;
+  string audit_operation_id = 6;
+}
+// Decision made by a trusted human when a prior issue operation requires
+// evidence-backed manual reconciliation.
+enum IssueOperationResolutionDecision {
+  ISSUE_OPERATION_RESOLUTION_DECISION_UNSPECIFIED = 0;
+  ISSUE_OPERATION_RESOLUTION_DECISION_CONFIRM_APPLIED = 1;
+  ISSUE_OPERATION_RESOLUTION_DECISION_CONFIRM_NOT_APPLIED = 2;
+}
+// Selects whether a resolution is server-evidence based or a human final
+// arbitration that may settle an otherwise unprovable outcome.
+enum IssueOperationResolutionMode {
+  ISSUE_OPERATION_RESOLUTION_MODE_UNSPECIFIED = 0;
+  ISSUE_OPERATION_RESOLUTION_MODE_EVIDENCE_CONFIRMATION = 1;
+  ISSUE_OPERATION_RESOLUTION_MODE_HUMAN_ARBITRATION = 2;
+}
+// Final conclusion recorded for a human arbitration.  UNKNOWN_SETTLED is an
+// explicit operational conclusion, not evidence that the mutation was absent.
+enum IssueOperationArbitrationOutcome {
+  ISSUE_OPERATION_ARBITRATION_OUTCOME_UNSPECIFIED = 0;
+  ISSUE_OPERATION_ARBITRATION_OUTCOME_APPLIED = 1;
+  ISSUE_OPERATION_ARBITRATION_OUTCOME_NOT_APPLIED = 2;
+  ISSUE_OPERATION_ARBITRATION_OUTCOME_UNKNOWN_SETTLED = 3;
+}
+// Typed receipt for a primary trusted-consumer ownership action.
+message IssueAdminActionResult {
+  string issue_id = 1;
+  issue_tracker.v1.IssueState resulting_state = 2;
+  uint64 resulting_revision = 3;
+  string action = 4;
+  // True only when this action advanced the Issue revision. NO_CHANGE is a
+  // durable administrative decision and remains replayable at the same
+  // revision.
+  bool changed = 5;
+  // The immutable marker records the state before the administrative write.
+  // It is absent for a NO_CHANGE decision.
+  optional issue_tracker.v1.IssueState previous_state = 6;
+  // The admitted CAS revision. It is equal to resulting_revision for
+  // NO_CHANGE and one less for a changing action.
+  uint64 previous_revision = 7;
+  // True only when this committed action cleared ownership attributes.
+  bool ownership_cleared = 8;
+  // Server-owned Tracker operation marker that produced this receipt.
+  string audit_operation_id = 9;
+  // Commit timestamp captured by the immutable Tracker marker.
+  issue_tracker.v1.UtcInstant confirmed_at = 10;
+  // Whether the admitted explicit inconsistent-claim resolution was applied
+  // by this changing action.
+  bool inconsistent_claim_resolution_applied = 11;
+  // Whether the admitted dependency override was applied by this changing
+  // terminal action.
+  bool dependency_override_applied = 12;
+  // Whether the request explicitly asked the server to clear an inconsistent
+  // ownership tuple, independent of whether the action changed the Issue.
+  bool inconsistent_claim_resolution_requested = 13;
+  // Whether the request explicitly enabled dependency override.
+  bool dependency_override_requested = 14;
+  // Ownership attribute keys that the Tracker repaired in its atomic write.
+  repeated string repaired_ownership_attributes = 15;
+  // Lease classification observed by Tracker before the write.
+  string observed_lease_classification = 16;
+  // Server-owned dependency targets covered by the override.
+  repeated string dependency_override_target_issue_ids = 17;
+  // Classification of the inconsistent tuple when one was observed.
+  string inconsistent_claim_classification = 18;
+  // Dependency relation and blocker snapshot used when a COMPLETE override
+  // was applied.  These values are immutable evidence, not a live shadow of
+  // the dependency Issues.
+  repeated DependencyOverrideObservation dependency_override_observations = 19;
+}
+
+// Immutable observation of one unresolved dependency at terminal-action
+// commit time.  The relation ID and dependency Issue ID are both retained so
+// an audit can distinguish duplicate or changed relationships.
+message DependencyOverrideObservation {
+  string relation_id = 1;
+  string dependency_issue_id = 2;
+  uint64 observed_revision = 3;
+  issue_tracker.v1.IssueState observed_state = 4;
+}
+// Immutable receipt of a manual operation-resolution decision.
+message IssueOperationResolutionResult {
+  string operation_id = 1;
+  IssueOperationResolutionDecision decision = 2;
+  DurableOperationState resulting_state = 3;
+  uint64 resulting_generation = 4;
+  uint64 verified_issue_revision = 5;
+  repeated string evidence_refs = 6;
+  // The source operation settled by this resolution.
+  string source_operation_id = 7;
+  DurableOperationState previous_state = 8;
+  uint64 previous_generation = 9;
+  string audit_ref = 10;
+  UtcInstant confirmed_at = 11;
+  string source_result_ref = 12;
+  string not_applied_cause = 13;
+  string required_remediation = 14;
+  IssueOperationResolutionMode mode = 15;
+  IssueOperationArbitrationOutcome arbitration_outcome = 16;
+  bool uncertainty_acknowledged = 17;
+  string arbitration_reason = 18;
+  string judgment_actor_id = 19;
+  // Classification of server-owned evidence considered at the resolution
+  // boundary. Human arbitration may intentionally have no server evidence.
+  IssueOperationResolutionEvidenceStatus evidence_status = 20;
+  // Facts that the server was able to verify from the referenced records.
+  repeated IssueOperationResolutionFact verified_facts = 21;
+  // Explicit residual uncertainty retained with the human decision.
+  repeated string remaining_uncertainties = 22;
+  // Immutable source state captured before the resolution commit.
+  Snapshot previous_operation_snapshot = 23;
+  // Immutable replay payload captured before the resolution commit, when one
+  // existed. It is kept separate from the post-resolution source result.
+  Snapshot previous_replay_snapshot = 24;
+}
+
+enum IssueOperationResolutionEvidenceStatus {
+  ISSUE_OPERATION_RESOLUTION_EVIDENCE_STATUS_UNSPECIFIED = 0;
+  ISSUE_OPERATION_RESOLUTION_EVIDENCE_STATUS_NONE_SUPPLIED = 1;
+  ISSUE_OPERATION_RESOLUTION_EVIDENCE_STATUS_PARTIALLY_VERIFIED = 2;
+  ISSUE_OPERATION_RESOLUTION_EVIDENCE_STATUS_VERIFIED = 3;
+  ISSUE_OPERATION_RESOLUTION_EVIDENCE_STATUS_NOT_VERIFIABLE = 4;
+}
+
+message IssueOperationResolutionFact {
+  string reference = 1;
+  string classification = 2;
+  string detail = 3;
+}
+// Successful manager-issued issue claim, including the one-time lease handle.
+message ManagerClaimIssueSuccess {
+  issue_tracker.v1.Issue current = 1;
+  bytes lease_handle = 2;
+}
+// Result of creating a backend issue directly through the manager.
+message IssueCreationResult {
+  issue_tracker.v1.Issue issue = 1;
+  IssueMapping mapping = 2;
+}
+// Revision of a manager entity changed by a mutation.
+message ManagerEntityRevision {
+  string entity_kind = 1;
+  string entity_id = 2;
+  uint64 revision = 3;
+}
+// Result of accepting a candidate into a backend issue.
+message CandidateAcceptanceResult {
+  Candidate candidate = 1;
+  IssueMapping mapping = 2;
+}
+// Result of superseding a candidate with another candidate or issue.
+message CandidateSupersedeResult {
+  // Identifies the candidate or issue that replaces the source candidate.
+  oneof target {
+    string target_candidate_id = 1;
+    string target_issue_id = 2;
+  }
+}
+
+// Delivery state of a durable outbox entry.
+enum OutboxStatus {
+  OUTBOX_STATUS_UNSPECIFIED = 0;
+  OUTBOX_STATUS_READY = 1;
+  OUTBOX_STATUS_LEASED = 2;
+  OUTBOX_STATUS_DISPATCHED = 3;
+  OUTBOX_STATUS_ACKNOWLEDGED = 4;
+  OUTBOX_STATUS_DEAD_LETTER = 5;
+}
+// Durable message awaiting or recording downstream delivery.
+message OutboxEntry {
+  string outbox_id = 1;
+  string operation_id = 2;
+  string topic = 3;
+  OutboxStatus status = 4;
+  string payload_snapshot_ref = 5;
+  string payload_digest = 6;
+  uint64 generation = 7;
+  uint32 attempt = 8;
+  optional string lease_id = 9;
+  optional UtcInstant lease_expires_at = 10;
+  optional UtcInstant next_attempt_at = 11;
+  optional UtcInstant dispatched_at = 12;
+  optional UtcInstant acknowledged_at = 13;
+  ManagerErrorCode error_code = 14;
+  UtcInstant created_at = 15;
+}
+
+// Synchronization state between a backend issue and manager operations.
+enum SyncState {
+  SYNC_STATE_UNSPECIFIED = 0;
+  SYNC_STATE_CONFIRMED = 1;
+  SYNC_STATE_PENDING = 2;
+  SYNC_STATE_UNCONFIRMED = 3;
+  SYNC_STATE_FAILED = 4;
+}
+// Why an operation was or was not selected for an issue synchronization view.
+enum SyncSelectionReason {
+  SYNC_SELECTION_REASON_UNSPECIFIED = 0;
+  SYNC_SELECTION_REASON_NO_RELEVANT_OPERATION = 1;
+  SYNC_SELECTION_REASON_SELECTED_OPERATION = 2;
+}
+// Why a causal operation chain was excluded from synchronization selection.
+enum SyncChainExclusionReason {
+  SYNC_CHAIN_EXCLUSION_REASON_UNSPECIFIED = 0;
+  SYNC_CHAIN_EXCLUSION_REASON_NONE = 1;
+  SYNC_CHAIN_EXCLUSION_REASON_SUPERSEDED = 2;
+  SYNC_CHAIN_EXCLUSION_REASON_NOT_AFFECTING_READY = 3;
+}
+// Integrity failure detected while verifying a causal operation chain.
+enum SyncChainVerificationFailure {
+  SYNC_CHAIN_VERIFICATION_FAILURE_UNSPECIFIED = 0;
+  SYNC_CHAIN_VERIFICATION_FAILURE_NONE = 1;
+  SYNC_CHAIN_VERIFICATION_FAILURE_MISSING_OPERATION = 2;
+  SYNC_CHAIN_VERIFICATION_FAILURE_BROKEN_CAUSAL_LINK = 3;
+  SYNC_CHAIN_VERIFICATION_FAILURE_CYCLE = 4;
+  SYNC_CHAIN_VERIFICATION_FAILURE_GENERATION_MISMATCH = 5;
+  SYNC_CHAIN_VERIFICATION_FAILURE_SUBJECT_MISMATCH = 6;
+  SYNC_CHAIN_VERIFICATION_FAILURE_SCOPE_MISMATCH = 7;
+  SYNC_CHAIN_VERIFICATION_FAILURE_FINGERPRINT_MISMATCH = 8;
+}
+// Resource scope and idempotency identity of an operation in a sync chain.
+message SyncOperationScope {
+  // Identifies the one resource type governed by the operation.
+  oneof scope {
+    string candidate_id = 1;
+    string evidence_id = 2;
+    string extraction_run_id = 3;
+    string issue_id = 4;
+    string backup_id = 5;
+    string export_id = 6;
+  }
+  string method = 7;
+  string idempotency_scope = 8;
+}
+// Server-generated witness for one causal chain considered during sync selection.
+message SyncChainHeadEvidence {
+  string operation_id = 1;
+  string causal_root_operation_id = 2;
+  uint64 generation = 3;
+  uint64 manager_sequence = 4;
+  DurableOperationState state = 5;
+  bool affects_ready = 6;
+  string sync_subject = 7;
+  repeated string ancestor_operation_ids = 8;
+  repeated string excluded_operation_ids = 9;
+  SyncChainExclusionReason exclusion_reason = 10;
+  SyncChainVerificationFailure verification_failure = 11;
+  SyncOperationScope scope = 12;
+}
+// Server-generated evidence for the exact operation set used to derive
+// IssueSyncView.sync_state. It is a read witness, not an Issue snapshot.
+message SyncSelectionEvidence {
+  string selection_rule_version = 1;
+  string sync_subject = 2;
+  string candidate_operation_set_fingerprint = 3;
+  string selected_operation_id = 4;
+  string causal_root_operation_id = 5;
+  uint64 generation = 6;
+  uint64 manager_sequence = 7;
+  bool affects_ready = 8;
+  DurableOperationState selected_status = 9;
+  SyncSelectionReason selection_reason = 10;
+  string superseded_chain_fingerprint = 11;
+  repeated string excluded_operation_ids = 12;
+  repeated string issue_ids = 13;
+  // Every causal chain head considered by the same read boundary.
+  repeated string chain_head_operation_ids = 14;
+  repeated SyncChainHeadEvidence chain_heads = 15;
+  string chain_heads_fingerprint = 16;
+  string selection_precedence_version = 17;
+}
+// Manager-derived synchronization state for one backend issue.
+message IssueSyncView {
+  string issue_id = 1;
+  SyncState sync_state = 2;
+  uint64 sync_subject_generation = 3;
+  repeated string operation_ids = 4;
+  bool resolution_required = 5;
+  repeated string candidate_ids = 6;
+  optional string selected_operation_id = 7;
+  optional string causal_root_operation_id = 8;
+  uint64 selected_manager_sequence = 9;
+  // Must be generated from the same read boundary as sync_state.
+  SyncSelectionEvidence selection_evidence = 10;
+}
+// Backend issue data combined with its manager synchronization state.
+message IssueWithSync {
+  // Canonical Issue data is read from the backend for this response and is
+  // never persisted as a manager-side shadow snapshot.
+  issue_tracker.v1.Issue issue = 1;
+  IssueSyncView sync = 2;
+  bool lookback_ready = 3;
+  optional IssueMapping mapping = 4;
+}
+// A page of backend issues combined with manager synchronization state.
+message IssueWithSyncPage {
+  repeated IssueWithSync issues = 1;
+  PageInfo page = 2;
+  // Captures the backend and manager read boundaries used for this page.
+  CompositePageSnapshot composite_snapshot = 3;
+}
+
+// A read boundary spanning the canonical backend and the manager projection.
+message CompositePageSnapshot {
+  issue_tracker.v1.PageSnapshot backend_snapshot = 1;
+  PageSnapshot manager_snapshot = 2;
+}
+
+// Filters durable operations for an audit-history traversal.
+message OperationHistoryFilter {
+  // Limits a direct operation scope to exactly one entity when present.
+  oneof direct_target {
+    string candidate_id = 1;
+    string evidence_id = 2;
+    string extraction_run_id = 3;
+    string issue_id = 4;
+  }
+  optional string method = 5;
+  repeated DurableOperationState states = 6;
+  optional UtcInstant created_at_from = 7;
+  optional UtcInstant created_at_to = 8;
+  // Multiple decision kinds are ORed; this filter is ANDed with all other
+  // supplied history criteria.
+  repeated ResolutionDecisionKind decision_kinds = 9;
+  // When true, an Issue direct target matches only operations whose direct
+  // scope is that Issue (affected Issue relations are excluded).
+  bool direct_scope_only = 10;
+}
+
+// Safe, closed categories for candidate resolution audit entries.
+enum ResolutionReasonCategory {
+  RESOLUTION_REASON_CATEGORY_UNSPECIFIED = 0;
+  RESOLUTION_REASON_CATEGORY_DUPLICATE = 1;
+  RESOLUTION_REASON_CATEGORY_INSUFFICIENT_EVIDENCE = 2;
+  RESOLUTION_REASON_CATEGORY_NOT_ACTIONABLE = 3;
+  RESOLUTION_REASON_CATEGORY_OUT_OF_SCOPE = 4;
+  RESOLUTION_REASON_CATEGORY_WITHDRAWN = 5;
+  RESOLUTION_REASON_CATEGORY_OTHER = 6;
+}
+
+// The explicit resolution decision admitted for a candidate operation.
+enum ResolutionDecisionKind {
+  RESOLUTION_DECISION_KIND_UNSPECIFIED = 0;
+  RESOLUTION_DECISION_KIND_CREATE_ISSUE = 1;
+  RESOLUTION_DECISION_KIND_CONFIRM_ASSOCIATED_ISSUE = 2;
+  RESOLUTION_DECISION_KIND_REJECT = 3;
+  RESOLUTION_DECISION_KIND_CANCEL_ASSOCIATED_ISSUE = 4;
+  RESOLUTION_DECISION_KIND_MERGE = 5;
+}
+
+// An entry returned by ListOperationHistory. It never carries request or
+// result snapshots, authentication data, raw source data, prompts, or secrets.
+message OperationHistoryEntry {
+  string operation_id = 1;
+  string method = 2;
+  DurableOperationState state = 3;
+  oneof direct_target {
+    string candidate_id = 4;
+    string evidence_id = 5;
+    string extraction_run_id = 6;
+    string issue_id = 7;
+  }
+  UtcInstant created_at = 8;
+  UtcInstant updated_at = 9;
+  ActorAudit actor_audit = 10;
+  string correlation_id = 11;
+  optional string causal_parent = 12;
+  repeated string affected_issue_ids = 13;
+  bool resolution_required = 14;
+  issue_tracker.v1.OperationCommitDurability commit_durability = 15;
+  issue_tracker.v1.OperationResultReplayability result_replayability = 16;
+  optional ResolutionReasonCategory resolution_reason_category = 17;
+  optional string resolution_rationale = 18;
+  optional ResolutionDecisionKind resolution_decision_kind = 19;
+  optional uint64 candidate_revision_at_decision = 20;
+}
+
+// A page of generic manager operation history.
+message OperationHistoryPage {
+  repeated OperationHistoryEntry entries = 1;
+  PageInfo page = 2;
+}
+
+// The source that authorizes a create or confirmation resolution.
+enum ResolutionBasis {
+  RESOLUTION_BASIS_UNSPECIFIED = 0;
+  RESOLUTION_BASIS_SOURCE_EVIDENCE = 1;
+  RESOLUTION_BASIS_HUMAN_REVIEW = 2;
+  RESOLUTION_BASIS_AUTO_REVIEW = 3;
+}
+
+// Tracks whether a receipt reference is prepared, already exists, or is
+// planned by the durable saga.
+enum ResolutionReferenceState {
+  RESOLUTION_REFERENCE_STATE_UNSPECIFIED = 0;
+  RESOLUTION_REFERENCE_STATE_RESERVED = 1;
+  RESOLUTION_REFERENCE_STATE_EXISTING = 2;
+  RESOLUTION_REFERENCE_STATE_PLANNED = 3;
+}
+
+message CandidateResolutionReference {
+  string candidate_id = 1;
+  ResolutionReferenceState state = 2;
+  optional uint64 revision = 3;
+}
+
+message IssueResolutionReference {
+  string issue_id = 1;
+  ResolutionReferenceState state = 2;
+  optional uint64 revision = 3;
+}
+
+// A mapping is identified by its candidate and issue, not a mutable mapping ID.
+message IssueMappingResolutionReference {
+  string candidate_id = 1;
+  string issue_id = 2;
+  ResolutionReferenceState state = 3;
+  // When committed, this is the canonical Issue revision.
+  optional uint64 issue_revision = 4;
+}
+
+// An admission receipt for a durable candidate-resolution saga.
+message ResolutionReceipt {
+  string operation_id = 1;
+  DurableOperationState state = 2;
+  CandidateResolutionReference candidate = 3;
+  repeated IssueResolutionReference issues = 4;
+  repeated IssueMappingResolutionReference mappings = 5;
+}
+
+// Server-evaluated work-selection policy registered by the gateway control
+// plane. Callers of the worker endpoint cannot specify this policy.
+enum WorkEligibilityMode {
+  WORK_ELIGIBILITY_MODE_UNSPECIFIED = 0;
+  WORK_ELIGIBILITY_MODE_REVIEWED_ONLY = 1;
+  WORK_ELIGIBILITY_MODE_INCLUDE_AUTO_REGISTERED = 2;
+}
+
+message WorkEligibilityPolicy { WorkEligibilityMode mode = 1; }
+
+// Identity and compatibility metadata for a persistent store.
+message StoreIdentity {
+  StoreRole role = 1;
+  string data_root_id = 2;
+  string store_id = 3;
+  string schema_fingerprint = 4;
+  uint64 generation = 5;
+  string store_pair_id = 6;
+  uint64 fencing_epoch = 7;
+  string contract_fingerprint = 8;
+}
+// Role of a store participating in the manager/backend store pair.
+enum StoreRole {
+  STORE_ROLE_UNSPECIFIED = 0;
+  STORE_ROLE_TASKCHAMPION = 1;
+  STORE_ROLE_MANAGER = 2;
+}
+// Current health assessment of the manager.
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+  HEALTH_STATUS_UNAVAILABLE = 3;
+}
+// Whether the manager is ready to serve its feature set.
+enum ActivationStatus {
+  ACTIVATION_STATUS_UNSPECIFIED = 0;
+  ACTIVATION_STATUS_READY = 1;
+  ACTIVATION_STATUS_BLOCKED = 2;
+}
+// Feature advertised by the manager contract.
+enum ManagerFeature {
+  MANAGER_FEATURE_UNSPECIFIED = 0;
+  MANAGER_FEATURE_CANDIDATES = 1;
+  MANAGER_FEATURE_DURABLE_OPERATIONS = 2;
+  MANAGER_FEATURE_GATEWAY_WORKER_REFLECTION = 3;
+  MANAGER_FEATURE_OWNERSHIP_RECOVERY = 4;
+  MANAGER_FEATURE_ISSUE_ADMIN_ACTIONS = 5;
+  MANAGER_FEATURE_ISSUE_OPERATION_RESOLUTION = 6;
+  MANAGER_FEATURE_OWNERSHIP_DIAGNOSTICS = 7;
+}
+// Condition preventing the manager from becoming ready.
+enum ActivationBlocker {
+  ACTIVATION_BLOCKER_UNSPECIFIED = 0;
+  ACTIVATION_BLOCKER_SCHEMA = 1;
+  ACTIVATION_BLOCKER_STORE_IDENTITY = 2;
+  ACTIVATION_BLOCKER_SECRET_FILTER = 3;
+  ACTIVATION_BLOCKER_LOCK = 4;
+  ACTIVATION_BLOCKER_MIGRATION = 5;
+  ACTIVATION_BLOCKER_RECONCILE = 6;
+  ACTIVATION_BLOCKER_HEALTH = 7;
+}
+// Stable machine-readable error codes returned by manager methods.
+enum ManagerErrorCode {
+  MANAGER_ERROR_UNSPECIFIED = 0;
+  MANAGER_INVALID_ARGUMENT = 1;
+  MANAGER_CONTRACT_MISMATCH = 2;
+  CANDIDATE_NOT_FOUND = 3;
+  EVIDENCE_NOT_FOUND = 4;
+  OPERATION_NOT_FOUND = 5;
+  EXTRACTION_RUN_NOT_FOUND = 6;
+  ISSUE_NOT_FOUND = 7;
+  BINDING_NOT_FOUND = 8;
+  REVISION_CONFLICT = 9;
+  IDEMPOTENCY_CONFLICT = 10;
+  INVALID_STATE_TRANSITION = 11;
+  PRECONDITION_FAILED = 12;
+  RETRY_EXHAUSTED = 13;
+  BACKEND_UNAVAILABLE = 14;
+  RESOLUTION_REQUIRED = 15;
+  RESULT_UNCONFIRMED = 16;
+  EVIDENCE_REVISION_CONFLICT = 17;
+  EVIDENCE_UNAVAILABLE = 18;
+  STORE_IDENTITY_MISMATCH = 19;
+  SCHEMA_MISMATCH = 20;
+  RESOURCE_LIMIT_EXCEEDED = 21;
+  PAGE_TOKEN_EXPIRED = 22;
+  INVALID_PAGE_TOKEN = 23;
+  METHOD_TARGET_MISMATCH = 24;
+  DATA_ROOT_NOT_FOUND = 25;
+  OPERATION_CONFLICT = 26;
+  OUTBOX_NOT_FOUND = 27;
+  OUTBOX_LEASE_EXPIRED = 28;
+  GENERATION_CONFLICT = 29;
+  MANAGER_SECRET_DETECTED = 30;
+  PENDING_ACCEPT_GUARD = 31;
+}
+// Expected and observed revisions for an optimistic-concurrency conflict.
+message RevisionConflict { uint64 expected_revision = 1; uint64 current_revision = 2; }
+// Details explaining why a pagination token can no longer be used.
+message PageTokenExpired {
+  optional UtcInstant expired_at = 1;
+  string snapshot_id = 2;
+  uint64 token_read_generation = 3;
+  uint64 current_read_generation = 4;
+}
+// Manager method error with an optional structured detail payload.
+message ManagerError {
+  ManagerErrorCode code = 1;
+  string message = 2;
+  bool retryable = 3;
+  // Provides error-code-specific structured details when available.
+  oneof detail {
+    RevisionConflict revision_conflict = 4;
+    DurableOperation operation = 5;
+    PageTokenExpired page_token_expired = 6;
+    OperationDiagnosis operation_diagnosis = 7;
+    OwnershipIntegrityDiagnosis ownership_integrity_diagnosis = 8;
+  }
+}
+
+// Safe diagnosis of a malformed or otherwise unrecoverable durable operation.
+// Request payloads, lease handles, credentials, and raw source data are never
+// included in this record.
+message OperationDiagnosis {
+  string operation_id = 1;
+  string classification = 2;
+  optional uint64 source_generation = 3;
+  optional uint64 attempt_generation = 4;
+  string evidence_ref = 5;
+  string evidence_digest = 6;
+  string replayability = 7;
+  string resolution_state = 8;
+  optional string resolution_operation_id = 9;
+  string repair_condition = 10;
+  UtcInstant recorded_at = 11;
+}
+
+// Safe diagnosis for an integrity anomaly found before a manager operation
+// exists. The target identity is stable across re-scans; observation values
+// that cannot be decoded are left absent rather than fabricated.
+message OwnershipIntegrityDiagnosis {
+  string target_kind = 1;
+  string target_id = 2;
+  string diagnosis_class = 3;
+  string evidence_digest = 4;
+  uint64 diagnosis_generation = 5;
+  uint64 observation_token = 6;
+  uint64 repair_epoch = 7;
+  optional uint64 observed_revision = 8;
+  optional string lease_classification = 9;
+  string repair_condition = 10;
+  string state = 11;
+  optional string resolution_operation_id = 12;
+  UtcInstant first_detected_at = 13;
+  UtcInstant last_confirmed_at = 14;
+  optional UtcInstant resolved_at = 15;
+  // Safe names of ownership attributes that were missing or malformed. Raw
+  // lease values (including handles and owner identities) are never exposed.
+  repeated string invalid_attributes = 16;
+  // Safe observation of the lease expiry, when a lease precondition applies.
+  optional UtcInstant lease_expires_at = 17;
+  // Open dependency Issues that prevent the requested transition.
+  repeated string open_blocker_issue_ids = 18;
+}
+
+// A server-owned reference supplied with an administrative repair request.
+// Only the immutable identity and evidence high-water marks are accepted;
+// callers cannot submit a diagnosis payload or alter its lifecycle state.
+message OwnershipIntegrityDiagnosisReference {
+  string target_kind = 1;
+  string target_id = 2;
+  string diagnosis_class = 3;
+  string evidence_digest = 4;
+  uint64 diagnosis_generation = 5;
+  uint64 observation_token = 6;
+  uint64 repair_epoch = 7;
+}

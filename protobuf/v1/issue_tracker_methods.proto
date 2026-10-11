@@ -1,0 +1,328 @@
+syntax = "proto3";
+package issue_tracker.v1;
+import "v1/issue_tracker_common.proto";
+
+// Describes the contract and runtime capabilities exposed by this runner.
+message ContractInfo {
+  string contract_version = 1;
+  string contract_fingerprint = 2;
+  string storage_schema_version = 3;
+  string storage_schema_fingerprint = 4;
+  string taskchampion_version = 5;
+  // Method keys accepted by the runner.
+  repeated string method_keys = 6;
+  HealthStatus health = 7;
+}
+// Requests the runner contract and health information.
+message GetContractInfoArgs { RequestContext context = 1; }
+// Returns contract information or a request error.
+message GetContractInfoResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { ContractInfo success = 1; IssueTrackerError error = 2; }
+}
+// Requests one issue and a page of its relations.
+message GetIssueArgs {
+  RequestContext context = 1;
+  string issue_id = 2;
+  // Pagination request for relations attached to the issue.
+  PageRequest relation_page = 3;
+}
+// Returns issue details or a request error.
+message GetIssueResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { IssueDetails success = 1; IssueTrackerError error = 2; }
+}
+// Requests issues matching a filter and sort order.
+message ListIssuesArgs {
+  RequestContext context = 1;
+  IssueFilter filter = 2;
+  IssueSort sort = 3;
+  PageRequest page = 4;
+  // Requests the matching-item count when the configured scan limit permits it.
+  bool include_total_size = 5;
+}
+// Returns a page of issues or a request error.
+message ListIssuesResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { IssuePage success = 1; IssueTrackerError error = 2; }
+}
+// Requests issues that are currently ready for work.
+message ListReadyIssuesArgs {
+  RequestContext context = 1;
+  IssueFilter filter = 2;
+  PageRequest page = 3;
+  // Requests the matching-item count when the configured scan limit permits it.
+  bool include_total_size = 4;
+}
+// Returns a page of ready issues or a request error.
+message ListReadyIssuesResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { IssuePage success = 1; IssueTrackerError error = 2; }
+}
+// Requests comments for one issue.
+message ListIssueCommentsArgs {
+  RequestContext context = 1;
+  string issue_id = 2;
+  PageRequest page = 3;
+}
+// Returns a page of comments or a request error.
+message ListIssueCommentsResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { CommentPage success = 1; IssueTrackerError error = 2; }
+}
+// Requests history entries for one issue.
+message ListIssueHistoryArgs {
+  RequestContext context = 1;
+  string issue_id = 2;
+  PageRequest page = 3;
+}
+// Returns a page of history entries or a request error.
+message ListIssueHistoryResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { HistoryPage success = 1; IssueTrackerError error = 2; }
+}
+// Requests a validated backup or export artifact.
+message GetArtifactArgs {
+  RequestContext context = 1;
+  string artifact_id = 2;
+}
+// Returns an artifact or a request error.
+message GetArtifactResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { Artifact success = 1; IssueTrackerError error = 2; }
+}
+// Requests validated backup and export artifacts.
+message ListArtifactsArgs {
+  RequestContext context = 1;
+  PageRequest page = 2;
+}
+// Returns a page of artifacts or a request error.
+message ListArtifactsResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { ArtifactPage success = 1; IssueTrackerError error = 2; }
+}
+// Requests the record for an idempotent write operation.
+message GetOperationArgs {
+  RequestContext context = 1;
+  string downstream_operation_id = 2;
+}
+// Returns an operation record or a request error.
+message GetOperationResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { OperationRecord success = 1; IssueTrackerError error = 2; }
+}
+
+// Creates an issue with a caller-supplied stable identifier.
+message CreateIssueArgs {
+  WriteContext context = 1;
+  string issue_id = 2;
+  IssueDraft issue = 3;
+}
+// Returns the created issue mutation or a request error.
+message CreateIssueResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { IssueMutation success = 1; IssueTrackerError error = 2; }
+}
+// Holds the replacement values selected by UpdateIssueArgs.update_mask.
+message IssuePatch {
+  optional string title = 1;
+  optional string description = 2;
+  optional IssueKind kind = 3;
+  optional IssuePriority priority = 4;
+  repeated string labels = 5;
+  repeated string acceptance_criteria = 6;
+  repeated ContextRef contexts = 7;
+  // Sets or explicitly clears the due time.
+  oneof due_at_change {
+    UtcInstant due_at = 8;
+    ClearField clear_due_at = 9;
+  }
+  // Sets or explicitly clears the review time.
+  oneof review_at_change {
+    UtcInstant review_at = 10;
+    ClearField clear_review_at = 11;
+  }
+  optional ConfirmationStatus confirmation_status = 12;
+  repeated MetadataEntry provenance_metadata = 13;
+  repeated SourceEvidenceRef source_evidence = 14;
+}
+// Updates the fields named by update_mask.
+message UpdateIssueArgs {
+  WriteContext context = 1;
+  string issue_id = 2;
+  // When present, rejects the update unless the issue has this revision.
+  optional uint64 expected_revision = 3;
+  // Selects the patch fields to replace; repeated fields are replaced in full.
+  repeated IssueField update_mask = 4;
+  IssuePatch patch = 5;
+  optional IssueState target_state = 6;
+  // Required when target_state is a terminal lifecycle state.
+  oneof terminal_report {
+    CompletionReport completion = 7;
+    CancellationReport cancellation = 8;
+  }
+}
+// Returns the updated issue mutation or a request error.
+message UpdateIssueResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { IssueMutation success = 1; IssueTrackerError error = 2; }
+}
+// Changes an issue lifecycle state.
+message TransitionIssueArgs {
+  WriteContext context = 1;
+  string issue_id = 2;
+  // When present, rejects the transition unless the issue has this revision.
+  optional uint64 expected_revision = 3;
+  IssueState target_state = 4;
+  // Required by transitions that must prove ownership of an active claim.
+  optional bytes lease_handle = 5;
+  // Scheduled review time when transitioning to the deferred state.
+  optional UtcInstant deferred_review_at = 6;
+  // Claim revision that must match when a claim is required.
+  optional uint64 claim_revision = 7;
+  // Supplies the report required by a terminal state transition.
+  oneof terminal_report {
+    CompletionReport completion = 8;
+    CancellationReport cancellation = 9;
+  }
+}
+// Returns the transitioned issue mutation or a request error.
+message TransitionIssueResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { IssueMutation success = 1; IssueTrackerError error = 2; }
+}
+// Claims an issue for the requesting actor.
+message ClaimIssueArgs {
+  WriteContext context = 1;
+  string issue_id = 2;
+  // When present, rejects the claim unless the issue has this revision.
+  optional uint64 expected_revision = 3;
+  // Requested claim duration, constrained by the configured lease policy.
+  optional TimeSpan requested_lease = 4;
+}
+// Returns the claim and its lease handle or a request error.
+message ClaimIssueResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { ClaimIssueSuccess success = 1; IssueTrackerError error = 2; }
+}
+// Extends an active issue claim.
+message HeartbeatIssueClaimArgs {
+  WriteContext context = 1;
+  string issue_id = 2;
+  // When present, rejects the heartbeat unless the issue has this revision.
+  optional uint64 expected_revision = 3;
+  // Revision of the claim being extended.
+  optional uint64 claim_revision = 4;
+  // Opaque capability returned when the claim was acquired.
+  bytes lease_handle = 5;
+  // Requested extension, constrained by the configured lease policy.
+  optional TimeSpan requested_extension = 6;
+}
+// Returns the updated claim state or a request error.
+message HeartbeatIssueClaimResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { ClaimMutation success = 1; IssueTrackerError error = 2; }
+}
+// Releases an active issue claim; an in-progress Issue returns to OPEN atomically.
+message ReleaseIssueClaimArgs {
+  WriteContext context = 1;
+  string issue_id = 2;
+  // When present, rejects the release unless the issue has this revision.
+  optional uint64 expected_revision = 3;
+  // Revision of the claim being released.
+  optional uint64 claim_revision = 4;
+  // Opaque capability returned when the claim was acquired.
+  bytes lease_handle = 5;
+}
+// Returns the released issue mutation or a request error.
+message ReleaseIssueClaimResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { IssueMutation success = 1; IssueTrackerError error = 2; }
+}
+// Reconciles a claim after its lease has expired.
+message ReconcileExpiredClaimArgs {
+  WriteContext context = 1;
+  string issue_id = 2;
+  // When present, rejects reconciliation unless the issue has this revision.
+  optional uint64 expected_revision = 3;
+  // Revision of the expired claim to reconcile.
+  optional uint64 claim_revision = 4;
+}
+// Returns the reconciled issue mutation or a request error.
+message ReconcileExpiredClaimResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { IssueMutation success = 1; IssueTrackerError error = 2; }
+}
+// Adds a directional relation between two issues.
+message AddIssueRelationArgs {
+  WriteContext context = 1;
+  string relation_id = 2;
+  RelationKind kind = 3;
+  string source_issue_id = 4;
+  // When present, rejects the write unless the source has this revision.
+  optional uint64 source_expected_revision = 5;
+  string target_issue_id = 6;
+  // When present, rejects the write unless the target has this revision.
+  optional uint64 target_expected_revision = 7;
+}
+// Returns the added relation mutation or a request error.
+message AddIssueRelationResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { RelationMutation success = 1; IssueTrackerError error = 2; }
+}
+// Removes an existing relation between two issues.
+message RemoveIssueRelationArgs {
+  WriteContext context = 1;
+  string relation_id = 2;
+  string source_issue_id = 3;
+  // When present, rejects the write unless the source has this revision.
+  optional uint64 source_expected_revision = 4;
+  string target_issue_id = 5;
+  // When present, rejects the write unless the target has this revision.
+  optional uint64 target_expected_revision = 6;
+}
+// Returns the removed relation mutation or a request error.
+message RemoveIssueRelationResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { RelationMutation success = 1; IssueTrackerError error = 2; }
+}
+// Adds a comment to an issue.
+message AddIssueCommentArgs {
+  WriteContext context = 1;
+  string issue_id = 2;
+  // When present, rejects the write unless the issue has this revision.
+  optional uint64 expected_revision = 3;
+  string comment_id = 4;
+  string body = 5;
+}
+// Returns the added comment mutation or a request error.
+message AddIssueCommentResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { CommentMutation success = 1; IssueTrackerError error = 2; }
+}
+
+// Creates a backup artifact for the tracker data.
+message CreateBackupArgs {
+  WriteContext context = 1;
+  // Optional human-readable label stored with the artifact.
+  optional string label = 2;
+}
+// Returns the created backup artifact or a request error.
+message CreateBackupResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { ArtifactMutation success = 1; IssueTrackerError error = 2; }
+}
+// Exports selected issues to an artifact.
+message ExportIssuesArgs {
+  WriteContext context = 1;
+  IssueFilter filter = 2;
+  // Includes issue history entries in the export.
+  bool include_history = 3;
+  // Includes issue comments in the export.
+  bool include_comments = 4;
+}
+// Returns the created export artifact or a request error.
+message ExportIssuesResult {
+  // Exactly one of the successful response and an error is returned.
+  oneof outcome { ArtifactMutation success = 1; IssueTrackerError error = 2; }
+}

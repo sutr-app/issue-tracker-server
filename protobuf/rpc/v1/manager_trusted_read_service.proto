@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package issue_tracker.rpc.v1;
+
+import "manager/v1/issue_tracker_manager_methods.proto";
+
+// Read-only native Tracker evidence exposed only to the primary trusted
+// consumer. Writes remain available exclusively through ManagerConsumerService.
+service ManagerTrustedReadService {
+  rpc ListIssueHistory(issue_tracker.manager.v1.ListIssueHistoryArgs) returns (issue_tracker.manager.v1.ListIssueHistoryResult);
+  rpc GetDownstreamOperation(issue_tracker.manager.v1.GetDownstreamOperationArgs) returns (issue_tracker.manager.v1.GetDownstreamOperationResult);
+}

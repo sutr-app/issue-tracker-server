@@ -1,0 +1,22 @@
+syntax = "proto3";
+package issue_tracker.rpc.v1;
+import "manager/v1/issue_tracker_manager_common.proto";
+import "manager/v1/issue_tracker_manager_methods.proto";
+message RunOutboxCycleArgs { string correlation_id = 1; }
+message RunOutboxCycleSuccess {
+  uint32 recovered_operations = 1;
+  uint32 delivery_attempts = 2;
+  uint32 confirmed_operations = 3;
+  bool delivery_limit_reached = 4;
+  issue_tracker.manager.v1.ContractInfo contract = 5;
+  repeated issue_tracker.manager.v1.MaintenancePhaseHealth maintenance_phases = 6;
+}
+message RunOutboxCycleResult {
+  oneof outcome {
+    RunOutboxCycleSuccess success = 1;
+    issue_tracker.manager.v1.ManagerError error = 2;
+  }
+}
+service OutboxMaintenanceService {
+  rpc RunOutboxCycle(RunOutboxCycleArgs) returns (RunOutboxCycleResult);
+}

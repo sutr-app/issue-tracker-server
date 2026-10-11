@@ -1,0 +1,139 @@
+syntax = "proto3";
+package issue_tracker.rpc.v1;
+
+import "manager/v1/issue_tracker_manager_common.proto";
+
+// Facade that records an extraction run and optionally auto-registers
+// UNREVIEWED issues. Callers supply already-shaped candidates; this
+// service evaluates them. It does not run an LLM.
+//
+// This is not an authentication or network boundary. The process exposes
+// IssueExtract on the primary trusted-consumer listener, alongside the
+// restricted ManagerConsumerService surface. Gateway workers are served by a
+// separate endpoint and cannot invoke this service.
+//
+// Apply is one idempotent write of ExtractionRun, candidates, and
+// verified locator evidence. Replay is determined from the canonical request
+// digest, including the normalized structured policy.
+// STRONG is a server-side StrongDetectionProof, not a caller
+// DetectionBasis; Apply rejects detection = STRONG.
+// AUTO_REGISTER creates AUTO_DETECTED / UNREVIEWED issues only when the
+// candidate is strong under the supplied policy snapshot.
+// The server injects actor `issue-tracker:issue-extract`
+// (ActorKind SYSTEM). Request bodies cannot set actor or write context.
+// Raw message bodies are not persisted. Optional MessageDigest.content
+// is hashed into content_digest and discarded.
+//
+// thread_id, summary_ref, and memory_id are opaque caller locators.
+// They are not Lookback-specific types.
+//
+// Requires manager settings.
+service IssueExtract {
+  // Return up to 8 comparison hints: same thread_id first, then newest.
+  rpc ListExtractionHints(ListExtractionHintsRequest) returns (ListExtractionHintsResponse);
+  // Persist a run, skip a disabled extraction, or return a contract error.
+  rpc ApplyExtraction(ApplyExtractionRequest) returns (ApplyExtractionResponse);
+}
+
+message ListExtractionHintsRequest {
+  // Opaque grouping key supplied by the caller (for example a conversation id).
+  string thread_id = 1;
+}
+
+message ExtractionHint {
+  string id = 1;
+  string kind = 2;
+  string title = 3;
+  string completion = 4;
+}
+
+message ListExtractionHintsResponse {
+  oneof outcome {
+    ExtractionHintPage success = 1;
+    ExtractError error = 2;
+  }
+}
+
+message ExtractionHintPage {
+  repeated ExtractionHint hints = 1;
+}
+
+message ExtractError {
+  // Machine-readable class: invalid_argument, idempotency_conflict,
+  // unavailable, manager, not_found, failed_precondition, apply_failed,
+  // register_failed, unconfirmed.
+  string code = 1;
+  string message = 2;
+}
+
+enum ExtractionSkipReason {
+  EXTRACTION_SKIP_REASON_UNSPECIFIED = 0;
+  EXTRACTION_SKIP_REASON_EXTRACTION_DISABLED = 1;
+}
+
+message ApplyExtractionRequest {
+  string thread_id = 1;
+  // Stable caller reference for the source summary or equivalent snapshot.
+  string summary_ref = 2;
+  // Empty or the sentinel "workflow" means the server hashes allowed_messages.
+  string snapshot_digest = 3;
+  string extract_schema = 4;
+  reserved 5, 10;
+  string model_id = 6;
+  string prompt_version = 7;
+  repeated MessageDigest allowed_messages = 8;
+  repeated string input_message_ids = 9;
+  repeated ExtractCandidateInput candidates = 11;
+  bool mixed = 12;
+  optional string failure_reason = 13;
+  string idempotency_key = 14;
+  // Required structured policy. The server stores its normalized form on the
+  // resulting ExtractionRun.
+  issue_tracker.manager.v1.ExtractionPolicy policy = 15;
+  // Temporarily disables exact REJECTED suppressions for matching candidates
+  // in this run only. Duplicate or empty IDs are invalid.
+  repeated string rejected_candidate_ids_to_unsuppress = 16;
+  // Labels saved on the source Thread at extraction time. Empty is a valid
+  // representation of a Thread with no labels.
+  repeated string source_labels = 17;
+}
+
+message MessageDigest {
+  string memory_id = 1;
+  string content_digest = 2;
+  // Optional request-only body. Hashed into content_digest and discarded.
+  string content = 3;
+}
+
+message ExtractCandidateInput {
+  string title = 1;
+  string description = 2;
+  string kind = 3;
+  string suggested_priority = 4;
+  string suggested_state = 5;
+  string unfinished_reason = 6;
+  string completion = 7;
+  // EXPLICIT or INFERRED. STRONG is rejected.
+  string detection = 8;
+  double confidence = 9;
+  repeated string locator_memory_ids = 10;
+}
+
+message ApplyExtractionResponse {
+  oneof outcome {
+    AppliedExtraction applied = 1;
+    SkippedExtraction skipped = 2;
+    ExtractError error = 3;
+  }
+}
+
+message AppliedExtraction {
+  string run_id = 1;
+  string run_state = 2;
+  repeated string candidate_ids = 3;
+  repeated string issue_ids = 4;
+}
+
+message SkippedExtraction {
+  ExtractionSkipReason reason = 1;
+}

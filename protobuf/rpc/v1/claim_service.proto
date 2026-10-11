@@ -1,0 +1,9 @@
+syntax = "proto3";
+package issue_tracker.rpc.v1;
+import "v1/issue_tracker_methods.proto";
+service ClaimService {
+  rpc ClaimIssue(issue_tracker.v1.ClaimIssueArgs) returns (issue_tracker.v1.ClaimIssueResult);
+  rpc HeartbeatIssueClaim(issue_tracker.v1.HeartbeatIssueClaimArgs) returns (issue_tracker.v1.HeartbeatIssueClaimResult);
+  rpc ReleaseIssueClaim(issue_tracker.v1.ReleaseIssueClaimArgs) returns (issue_tracker.v1.ReleaseIssueClaimResult);
+  rpc ReconcileExpiredClaim(issue_tracker.v1.ReconcileExpiredClaimArgs) returns (issue_tracker.v1.ReconcileExpiredClaimResult);
+}

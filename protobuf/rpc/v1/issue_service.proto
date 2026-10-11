@@ -1,0 +1,11 @@
+syntax = "proto3";
+package issue_tracker.rpc.v1;
+import "v1/issue_tracker_methods.proto";
+service IssueService {
+  rpc GetIssue(issue_tracker.v1.GetIssueArgs) returns (issue_tracker.v1.GetIssueResult);
+  rpc ListIssues(issue_tracker.v1.ListIssuesArgs) returns (issue_tracker.v1.ListIssuesResult);
+  rpc ListReadyIssues(issue_tracker.v1.ListReadyIssuesArgs) returns (issue_tracker.v1.ListReadyIssuesResult);
+  rpc CreateIssue(issue_tracker.v1.CreateIssueArgs) returns (issue_tracker.v1.CreateIssueResult);
+  rpc UpdateIssue(issue_tracker.v1.UpdateIssueArgs) returns (issue_tracker.v1.UpdateIssueResult);
+  rpc TransitionIssue(issue_tracker.v1.TransitionIssueArgs) returns (issue_tracker.v1.TransitionIssueResult);
+}

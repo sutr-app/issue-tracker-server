@@ -1,0 +1,38 @@
+[package]
+name = "issue-tracker-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+path = "../../src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+command-utils.workspace = true
+fs2.workspace = true
+issue-tracker-proto = { path = "../issue-tracker-proto" }
+prost.workspace = true
+rusqlite.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+taskchampion.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+tonic-reflection.workspace = true
+unicode-normalization.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+prost-types.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["net"] }
+tokio-stream = { version = "0.1", features = ["net"] }

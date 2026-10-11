@@ -1,0 +1,17 @@
+syntax = "proto3";
+package issue_tracker.rpc.v1;
+import "manager/v1/issue_tracker_manager_methods.proto";
+service CanonicalIssueService {
+  rpc GetIssueWithSync(issue_tracker.manager.v1.GetIssueWithSyncArgs) returns (issue_tracker.manager.v1.GetIssueWithSyncResult);
+  rpc ListIssuesWithSync(issue_tracker.manager.v1.ListIssuesWithSyncArgs) returns (issue_tracker.manager.v1.ListIssuesWithSyncResult);
+  rpc CreateIssue(issue_tracker.manager.v1.CreateIssueArgs) returns (issue_tracker.manager.v1.CreateIssueResult);
+  rpc UpdateIssue(issue_tracker.manager.v1.UpdateIssueArgs) returns (issue_tracker.manager.v1.UpdateIssueResult);
+  rpc TransitionIssue(issue_tracker.manager.v1.TransitionIssueArgs) returns (issue_tracker.manager.v1.TransitionIssueResult);
+  rpc ClaimIssue(issue_tracker.manager.v1.ClaimIssueArgs) returns (issue_tracker.manager.v1.ClaimIssueResult);
+  rpc HeartbeatIssueClaim(issue_tracker.manager.v1.HeartbeatIssueClaimArgs) returns (issue_tracker.manager.v1.HeartbeatIssueClaimResult);
+  rpc ReleaseIssueClaim(issue_tracker.manager.v1.ReleaseIssueClaimArgs) returns (issue_tracker.manager.v1.ReleaseIssueClaimResult);
+  rpc ReconcileExpiredClaim(issue_tracker.manager.v1.ReconcileExpiredClaimArgs) returns (issue_tracker.manager.v1.ReconcileExpiredClaimResult);
+  rpc AddIssueRelation(issue_tracker.manager.v1.AddIssueRelationArgs) returns (issue_tracker.manager.v1.AddIssueRelationResult);
+  rpc RemoveIssueRelation(issue_tracker.manager.v1.RemoveIssueRelationArgs) returns (issue_tracker.manager.v1.RemoveIssueRelationResult);
+  rpc AddIssueComment(issue_tracker.manager.v1.AddIssueCommentArgs) returns (issue_tracker.manager.v1.AddIssueCommentResult);
+}

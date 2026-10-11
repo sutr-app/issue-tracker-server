@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package issue_tracker.rpc.v1;
+
+// Compatibility import root. Service definitions are owned by the
+// entity-specific files in this directory.
+import "v1/issue_tracker_methods.proto";
+import "manager/v1/issue_tracker_manager_methods.proto";
+import "rpc/v1/tracker_info_service.proto";
+import "rpc/v1/issue_service.proto";
+import "rpc/v1/claim_service.proto";
+import "rpc/v1/relation_service.proto";
+import "rpc/v1/activity_service.proto";
+import "rpc/v1/artifact_service.proto";
+import "rpc/v1/operation_service.proto";
+import "rpc/v1/manager_info_service.proto";
+import "rpc/v1/candidate_service.proto";
+import "rpc/v1/extraction_run_service.proto";
+import "rpc/v1/manager_operation_service.proto";
+import "rpc/v1/manager_consumer_service.proto";
+import "rpc/v1/canonical_issue_service.proto";
+import "rpc/v1/outbox_maintenance_service.proto";
+import "rpc/v1/gateway_control_service.proto";
+
+// Deprecated aggregate facade for local issue-tracker clients.
+service IssueTrackerService {
+  rpc GetContractInfo(issue_tracker.v1.GetContractInfoArgs) returns (issue_tracker.v1.GetContractInfoResult);
+  rpc GetIssue(issue_tracker.v1.GetIssueArgs) returns (issue_tracker.v1.GetIssueResult);
+  rpc ListIssues(issue_tracker.v1.ListIssuesArgs) returns (issue_tracker.v1.ListIssuesResult);
+  rpc ListReadyIssues(issue_tracker.v1.ListReadyIssuesArgs) returns (issue_tracker.v1.ListReadyIssuesResult);
+  rpc ListIssueComments(issue_tracker.v1.ListIssueCommentsArgs) returns (issue_tracker.v1.ListIssueCommentsResult);
+  rpc ListIssueHistory(issue_tracker.v1.ListIssueHistoryArgs) returns (issue_tracker.v1.ListIssueHistoryResult);
+  rpc GetArtifact(issue_tracker.v1.GetArtifactArgs) returns (issue_tracker.v1.GetArtifactResult);
+  rpc ListArtifacts(issue_tracker.v1.ListArtifactsArgs) returns (issue_tracker.v1.ListArtifactsResult);
+  rpc GetOperation(issue_tracker.v1.GetOperationArgs) returns (issue_tracker.v1.GetOperationResult);
+  rpc CreateIssue(issue_tracker.v1.CreateIssueArgs) returns (issue_tracker.v1.CreateIssueResult);
+  rpc UpdateIssue(issue_tracker.v1.UpdateIssueArgs) returns (issue_tracker.v1.UpdateIssueResult);
+  rpc TransitionIssue(issue_tracker.v1.TransitionIssueArgs) returns (issue_tracker.v1.TransitionIssueResult);
+  rpc ClaimIssue(issue_tracker.v1.ClaimIssueArgs) returns (issue_tracker.v1.ClaimIssueResult);
+  rpc HeartbeatIssueClaim(issue_tracker.v1.HeartbeatIssueClaimArgs) returns (issue_tracker.v1.HeartbeatIssueClaimResult);
+  rpc ReleaseIssueClaim(issue_tracker.v1.ReleaseIssueClaimArgs) returns (issue_tracker.v1.ReleaseIssueClaimResult);
+  rpc ReconcileExpiredClaim(issue_tracker.v1.ReconcileExpiredClaimArgs) returns (issue_tracker.v1.ReconcileExpiredClaimResult);
+  rpc AddIssueRelation(issue_tracker.v1.AddIssueRelationArgs) returns (issue_tracker.v1.AddIssueRelationResult);
+  rpc RemoveIssueRelation(issue_tracker.v1.RemoveIssueRelationArgs) returns (issue_tracker.v1.RemoveIssueRelationResult);
+  rpc AddIssueComment(issue_tracker.v1.AddIssueCommentArgs) returns (issue_tracker.v1.AddIssueCommentResult);
+  rpc CreateBackup(issue_tracker.v1.CreateBackupArgs) returns (issue_tracker.v1.CreateBackupResult);
+  rpc ExportIssues(issue_tracker.v1.ExportIssuesArgs) returns (issue_tracker.v1.ExportIssuesResult);
+}
+
+service IssueTrackerMaintenanceService {
+  rpc RunOutboxCycle(RunOutboxCycleArgs) returns (RunOutboxCycleResult);
+}

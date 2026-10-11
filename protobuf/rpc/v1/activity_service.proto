@@ -1,0 +1,8 @@
+syntax = "proto3";
+package issue_tracker.rpc.v1;
+import "v1/issue_tracker_methods.proto";
+service ActivityService {
+  rpc ListIssueComments(issue_tracker.v1.ListIssueCommentsArgs) returns (issue_tracker.v1.ListIssueCommentsResult);
+  rpc ListIssueHistory(issue_tracker.v1.ListIssueHistoryArgs) returns (issue_tracker.v1.ListIssueHistoryResult);
+  rpc AddIssueComment(issue_tracker.v1.AddIssueCommentArgs) returns (issue_tracker.v1.AddIssueCommentResult);
+}

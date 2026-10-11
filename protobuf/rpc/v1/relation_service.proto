@@ -1,0 +1,7 @@
+syntax = "proto3";
+package issue_tracker.rpc.v1;
+import "v1/issue_tracker_methods.proto";
+service RelationService {
+  rpc AddIssueRelation(issue_tracker.v1.AddIssueRelationArgs) returns (issue_tracker.v1.AddIssueRelationResult);
+  rpc RemoveIssueRelation(issue_tracker.v1.RemoveIssueRelationArgs) returns (issue_tracker.v1.RemoveIssueRelationResult);
+}

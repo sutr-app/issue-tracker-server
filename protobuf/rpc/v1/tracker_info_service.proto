@@ -1,0 +1,6 @@
+syntax = "proto3";
+package issue_tracker.rpc.v1;
+import "v1/issue_tracker_methods.proto";
+service TrackerInfoService {
+  rpc GetContractInfo(issue_tracker.v1.GetContractInfoArgs) returns (issue_tracker.v1.GetContractInfoResult);
+}

@@ -1,0 +1,646 @@
+syntax = "proto3";
+
+package issue_tracker.v1;
+
+// Common wire types shared by the IssueTrackerRunner version 1 contract.
+
+// An instant represented as milliseconds since the Unix epoch, in UTC.
+message UtcInstant { int64 unix_epoch_millis = 1; }
+// A non-negative duration represented in milliseconds.
+message TimeSpan { uint64 millis = 1; }
+// Selects an explicit clear operation in a oneof field update.
+message ClearField {}
+
+// Classifies the purpose of an Issue.
+enum IssueKind {
+  ISSUE_KIND_UNSPECIFIED = 0;
+  ISSUE_KIND_TASK = 1;
+  ISSUE_KIND_BUG = 2;
+  ISSUE_KIND_RESEARCH = 3;
+  ISSUE_KIND_DECISION = 4;
+}
+// Orders Issues by urgency, from P0 (highest) to P4 (lowest).
+enum IssuePriority {
+  ISSUE_PRIORITY_UNSPECIFIED = 0;
+  ISSUE_PRIORITY_P0 = 1;
+  ISSUE_PRIORITY_P1 = 2;
+  ISSUE_PRIORITY_P2 = 3;
+  ISSUE_PRIORITY_P3 = 4;
+  ISSUE_PRIORITY_P4 = 5;
+}
+// Describes an Issue's workflow state.
+enum IssueState {
+  ISSUE_STATE_UNSPECIFIED = 0;
+  ISSUE_STATE_OPEN = 1;
+  ISSUE_STATE_IN_PROGRESS = 2;
+  ISSUE_STATE_BLOCKED = 3;
+  ISSUE_STATE_DEFERRED = 4;
+  ISSUE_STATE_DONE = 5;
+  ISSUE_STATE_CANCELED = 6;
+  // The implementation finished and its result is waiting for review. This is
+  // nonterminal; only the dedicated app Gateway mutation may write it.
+  ISSUE_STATE_AWAITING_REVIEW = 7;
+}
+// Closed update-mask vocabulary. Repeated and metadata fields are replaced in
+// full when their corresponding field is present in UpdateIssueArgs.update_mask.
+enum IssueField {
+  ISSUE_FIELD_UNSPECIFIED = 0;
+  ISSUE_FIELD_TITLE = 1;
+  ISSUE_FIELD_DESCRIPTION = 2;
+  ISSUE_FIELD_KIND = 3;
+  ISSUE_FIELD_PRIORITY = 4;
+  ISSUE_FIELD_LABELS = 5;
+  ISSUE_FIELD_ACCEPTANCE_CRITERIA = 6;
+  ISSUE_FIELD_CONTEXTS = 7;
+  ISSUE_FIELD_DUE_AT = 8;
+  ISSUE_FIELD_REVIEW_AT = 9;
+  ISSUE_FIELD_CONFIRMATION_STATUS = 10;
+  ISSUE_FIELD_PROVENANCE_METADATA = 11;
+  ISSUE_FIELD_SOURCE_EVIDENCE = 12;
+}
+// An opaque reference to source material in Lookback.
+message SourceEvidenceRef {
+  string thread_id = 1;
+  string memory_id = 2;
+}
+// Describes the semantic relationship between two Issues.
+enum RelationKind {
+  RELATION_KIND_UNSPECIFIED = 0;
+  RELATION_KIND_PARENT_CHILD = 1;
+  RELATION_KIND_BLOCKS = 2;
+  RELATION_KIND_RELATED = 3;
+  RELATION_KIND_DISCOVERED_FROM = 4;
+  RELATION_KIND_SUPERSEDES = 5;
+}
+// Identifies the kind of principal recorded in audit data.
+enum ActorKind {
+  ACTOR_KIND_UNSPECIFIED = 0;
+  ACTOR_KIND_HUMAN = 1;
+  ACTOR_KIND_INTERNAL_AGENT = 2;
+  ACTOR_KIND_EXTERNAL_AGENT = 3;
+  ACTOR_KIND_SYSTEM = 4;
+}
+// Records how an Issue entered the tracker.
+enum CreationBasis {
+  CREATION_BASIS_UNSPECIFIED = 0;
+  CREATION_BASIS_EXPLICIT = 1;
+  CREATION_BASIS_AUTO_DETECTED = 2;
+  CREATION_BASIS_IMPORTED = 3;
+}
+// Indicates whether an Issue's reported content has been reviewed.
+enum ConfirmationStatus {
+  CONFIRMATION_STATUS_UNSPECIFIED = 0;
+  CONFIRMATION_STATUS_CONFIRMED = 1;
+  CONFIRMATION_STATUS_UNREVIEWED = 2;
+}
+// Classifies evidence supplied when completing an Issue.
+enum CompletionEvidenceKind {
+  COMPLETION_EVIDENCE_KIND_UNSPECIFIED = 0;
+  COMPLETION_EVIDENCE_KIND_TEST_RESULT = 1;
+  COMPLETION_EVIDENCE_KIND_ARTIFACT = 2;
+  COMPLETION_EVIDENCE_KIND_OTHER_EVIDENCE = 3;
+}
+// Classifies the reason an Issue was canceled.
+enum CancellationClass {
+  CANCELLATION_CLASS_UNSPECIFIED = 0;
+  CANCELLATION_CLASS_FALSE_POSITIVE = 1;
+  CANCELLATION_CLASS_OTHER = 2;
+}
+// Classifies an external or organizational context associated with an Issue.
+enum ContextKind {
+  CONTEXT_KIND_UNSPECIFIED = 0;
+  CONTEXT_KIND_PROJECT = 1;
+  CONTEXT_KIND_REPOSITORY = 2;
+  CONTEXT_KIND_OTHER = 3;
+}
+// Reports whether an idempotent operation's storage commit is durable.
+enum OperationCommitDurability {
+  OPERATION_COMMIT_DURABILITY_UNSPECIFIED = 0;
+  // The storage commit outcome is not known to the caller or verifier.
+  OPERATION_COMMIT_DURABILITY_UNKNOWN = 1;
+  OPERATION_COMMIT_DURABILITY_DURABLE = 2;
+}
+// Reports whether a committed operation's original result can be replayed safely.
+enum OperationResultReplayability {
+  OPERATION_RESULT_REPLAYABILITY_UNSPECIFIED = 0;
+  OPERATION_RESULT_REPLAYABILITY_REPLAYABLE = 1;
+  // The write is durable, but the caller cannot safely replay its result.
+  OPERATION_RESULT_REPLAYABILITY_NOT_REPLAYABLE = 2;
+}
+// Identifies the resource scope affected by an idempotent operation.
+enum OperationScope {
+  OPERATION_SCOPE_UNSPECIFIED = 0;
+  OPERATION_SCOPE_ISSUE = 1;
+  OPERATION_SCOPE_RELATION = 2;
+  OPERATION_SCOPE_TRACKER = 3;
+}
+// Classifies a generated tracker artifact.
+enum ArtifactKind {
+  ARTIFACT_KIND_UNSPECIFIED = 0;
+  ARTIFACT_KIND_BACKUP = 1;
+  ARTIFACT_KIND_EXPORT = 2;
+}
+// Reports whether an artifact passed server-side validation.
+enum ArtifactValidationStatus {
+  ARTIFACT_VALIDATION_STATUS_UNSPECIFIED = 0;
+  ARTIFACT_VALIDATION_STATUS_PENDING = 1;
+  ARTIFACT_VALIDATION_STATUS_VALIDATED = 2;
+  ARTIFACT_VALIDATION_STATUS_INVALID = 3;
+}
+// Classifies an immutable Issue history event.
+enum HistoryEventKind {
+  HISTORY_EVENT_KIND_UNSPECIFIED = 0;
+  HISTORY_EVENT_KIND_ISSUE_CREATED = 1;
+  HISTORY_EVENT_KIND_ISSUE_UPDATED = 2;
+  HISTORY_EVENT_KIND_STATE_TRANSITIONED = 3;
+  HISTORY_EVENT_KIND_CLAIMED = 4;
+  HISTORY_EVENT_KIND_CLAIM_HEARTBEAT = 5;
+  HISTORY_EVENT_KIND_CLAIM_RELEASED = 6;
+  HISTORY_EVENT_KIND_RELATION_ADDED = 7;
+  HISTORY_EVENT_KIND_RELATION_REMOVED = 8;
+  HISTORY_EVENT_KIND_COMMENT_ADDED = 9;
+}
+// Reports the runner's ability to serve its contract safely.
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_READY = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+  HEALTH_STATUS_FAILED_CLOSED = 3;
+}
+// Classifies a structured IssueTrackerError.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INVALID_ARGUMENT = 1;
+  ERROR_CODE_INVALID_METHOD = 2;
+  ERROR_CODE_INVALID_PAGE_TOKEN = 3;
+  ERROR_CODE_ISSUE_NOT_FOUND = 4;
+  ERROR_CODE_RELATION_NOT_FOUND = 5;
+  ERROR_CODE_COMMENT_NOT_FOUND = 6;
+  ERROR_CODE_OPERATION_NOT_FOUND = 7;
+  ERROR_CODE_ARTIFACT_NOT_FOUND = 8;
+  ERROR_CODE_INVALID_STATE_TRANSITION = 9;
+  ERROR_CODE_REVISION_CONFLICT = 10;
+  ERROR_CODE_OWNERSHIP_CONFLICT = 11;
+  ERROR_CODE_INVALID_LEASE = 12;
+  ERROR_CODE_LEASE_EXPIRED = 13;
+  ERROR_CODE_BLOCKED_BY_OPEN_ISSUE = 14;
+  ERROR_CODE_RELATION_CYCLE = 15;
+  ERROR_CODE_IDEMPOTENCY_CONFLICT = 16;
+  ERROR_CODE_SECRET_DETECTED = 17;
+  // Compatibility-only value. The runner MUST NOT emit this value because
+  // caller authorization and policy rejection belong to the consumer boundary.
+  ERROR_CODE_PERMISSION_DENIED = 18 [deprecated = true];
+  ERROR_CODE_CONTRACT_MISMATCH = 19;
+  ERROR_CODE_SCHEMA_MISMATCH = 20;
+  ERROR_CODE_ROOT_LOCKED = 21;
+  ERROR_CODE_BACKUP_INVALID = 22;
+  ERROR_CODE_EXPORT_FAILED = 23;
+  ERROR_CODE_BACKEND_UNAVAILABLE = 24;
+  ERROR_CODE_RESULT_UNCONFIRMED = 25;
+  ERROR_CODE_CANCELED = 26;
+  ERROR_CODE_LEASE_NOT_EXPIRED = 27;
+  ERROR_CODE_RESOURCE_LIMIT_EXCEEDED = 28;
+  ERROR_CODE_PAGE_TOKEN_EXPIRED = 29;
+}
+
+// An audit identity for a human, agent, or system principal.
+message ActorRef {
+  // Audit identity supplied by the client; it is not an authorization credential.
+  string actor_id = 1;
+  ActorKind kind = 2;
+  optional string display_name = 3;
+}
+message ActorContext {
+  // The principal responsible for the operation or record.
+  ActorRef actor = 1;
+  // Optional session identifier for an agent actor.
+  optional string agent_session_id = 2;
+}
+// Request-scoped audit and tracing information.
+message RequestContext {
+  // Consumer policy decides whether an operation is exposed; this value is audit-only.
+  ActorContext caller = 1;
+  // Caller-supplied identifier for correlating related requests and records.
+  string correlation_id = 2;
+}
+message WriteContext {
+  RequestContext request = 1;
+  // Globally unique within the selected data root. It must not be reused for
+  // another method or operation scope, even when the payload is identical.
+  string downstream_operation_id = 2;
+  // Human-readable reason recorded in history for this mutation.
+  string reason = 3;
+}
+// A typed reference to a project, repository, or other related context.
+message ContextRef {
+  // The namespace in which value is interpreted.
+  ContextKind kind = 1;
+  string value = 2;
+  optional string uri = 3;
+}
+// A key-value item attached as provenance metadata.
+message MetadataEntry { string key = 1; string value = 2; }
+
+// Client-provided fields used to create an Issue.
+message IssueDraft {
+  string title = 1;
+  string description = 2;
+  IssueKind kind = 3;
+  IssuePriority priority = 4;
+  repeated string labels = 5;
+  repeated string acceptance_criteria = 6;
+  repeated ContextRef contexts = 7;
+  optional UtcInstant due_at = 8;
+  optional UtcInstant review_at = 9;
+  CreationBasis creation_basis = 10;
+  ConfirmationStatus confirmation_status = 11;
+  repeated MetadataEntry provenance_metadata = 12;
+  // Requested initial workflow state.
+  IssueState initial_state = 13;
+  repeated SourceEvidenceRef source_evidence = 14;
+}
+// The active lease that grants an actor temporary ownership of an Issue.
+message ClaimView {
+  ActorContext owner = 1;
+  UtcInstant lease_expires_at = 2;
+  // Revision of the claim lease, used to detect stale lease operations.
+  uint64 claim_revision = 3;
+}
+// The current canonical representation of an Issue.
+message Issue {
+  string issue_id = 1;
+  // Backend-specific identity used to correlate persisted data.
+  string backend_id = 2;
+  string title = 3;
+  string description = 4;
+  IssueKind kind = 5;
+  IssuePriority priority = 6;
+  IssueState state = 7;
+  repeated string labels = 8;
+  repeated string acceptance_criteria = 9;
+  repeated ContextRef contexts = 10;
+  optional UtcInstant due_at = 11;
+  optional UtcInstant review_at = 12;
+  // Monotonically increasing revision for optimistic concurrency control.
+  uint64 revision = 13;
+  ActorContext created_by = 14;
+  UtcInstant created_at = 15;
+  UtcInstant updated_at = 16;
+  optional UtcInstant completed_at = 17;
+  CreationBasis creation_basis = 18;
+  ConfirmationStatus confirmation_status = 19;
+  repeated MetadataEntry provenance_metadata = 20;
+  optional ClaimView claim = 21;
+  repeated SourceEvidenceRef source_evidence = 22;
+}
+// A directed relationship between two Issues.
+message IssueRelation {
+  string relation_id = 1;
+  RelationKind kind = 2;
+  string source_issue_id = 3;
+  string target_issue_id = 4;
+  UtcInstant created_at = 5;
+  ActorContext created_by = 6;
+}
+// A comment recorded against an Issue.
+message IssueComment {
+  string comment_id = 1;
+  string issue_id = 2;
+  string body = 3;
+  ActorContext actor = 4;
+  UtcInstant created_at = 5;
+  string correlation_id = 6;
+}
+// Evidence supporting a transition to the done state.
+message CompletionEvidence {
+  CompletionEvidenceKind kind = 1;
+  string summary = 2;
+  optional string uri = 3;
+}
+// A completion report backed by one or more pieces of evidence.
+message VerifiedCompletion { repeated CompletionEvidence evidence = 1; }
+// A completion report that leaves a stated residual risk.
+message UnverifiedCompletion {
+  string reason = 1;
+  string residual_risk = 2;
+}
+// Mutually exclusive verified or unverified completion report.
+message CompletionReport {
+  oneof result {
+    VerifiedCompletion verified = 1;
+    UnverifiedCompletion unverified = 2;
+  }
+}
+// Immutable run provenance persisted with the dedicated transition into
+// AWAITING_REVIEW. The full commit is a complete object ID, never a branch name.
+message AwaitingReviewCompletion {
+  string run_id = 1;
+  string full_commit_id = 2;
+  repeated string evidence_references = 3;
+  CompletionReport report = 4;
+}
+// Details supplied when an Issue is canceled.
+message CancellationReport { CancellationClass classification = 1; }
+// An immutable audit event for an Issue mutation.
+message IssueHistoryEntry {
+  string history_id = 1;
+  string issue_id = 2;
+  string downstream_operation_id = 3;
+  ActorContext actor = 4;
+  UtcInstant occurred_at = 5;
+  string reason = 6;
+  string correlation_id = 7;
+  // Issue revision after this event was applied.
+  uint64 resulting_revision = 8;
+  HistoryEventKind kind = 9;
+  optional StateHistoryDetail state_change = 10;
+  // Detail for the event subject, when the event kind has one.
+  oneof subject_detail {
+    ClaimHistoryDetail claim = 11;
+    RelationHistoryDetail relation = 12;
+    CommentHistoryDetail comment = 13;
+  }
+}
+// State transition details attached to a history event.
+message StateHistoryDetail {
+  optional IssueState old_state = 1;
+  IssueState new_state = 2;
+  optional CompletionReport completion = 3;
+  optional CancellationReport cancellation = 4;
+  optional AwaitingReviewCompletion awaiting_review = 5;
+}
+// Claim lifecycle details attached to a history event.
+message ClaimHistoryDetail {
+  uint64 claim_revision = 1;
+  optional ActorContext owner = 2;
+  optional UtcInstant lease_expires_at = 3;
+}
+// Relation lifecycle details attached to a history event.
+message RelationHistoryDetail {
+  string relation_id = 1;
+  RelationKind kind = 2;
+  string source_issue_id = 3;
+  string target_issue_id = 4;
+}
+// Comment lifecycle details attached to a history event.
+message CommentHistoryDetail { string comment_id = 1; }
+// An Issue together with its first page of relations.
+message IssueDetails {
+  Issue issue = 1;
+  repeated IssueRelation relations = 2;
+  PageInfo relation_page = 3;
+}
+
+// The traversal fingerprint commits the ordering/keyset used to issue a page
+// token. Servers must reject a token when this identity or the watermark does
+// not match the request.
+message StableTraversal { string order_fingerprint = 1; }
+// Identifies the consistent read view used for a paginated response.
+message PageSnapshot {
+  // Highest Issue revision visible in this read view.
+  uint64 read_revision_watermark = 1;
+  // Opaque server identity for the read view.
+  string snapshot_id = 2;
+  StableTraversal stable_traversal = 3;
+  // Tracker-global generation increments for every canonical write. A
+  // continuation token is expired when its generation no longer matches.
+  uint64 read_generation = 4;
+}
+// Pagination inputs for a list operation.
+message PageRequest {
+  // Maximum number of results requested for this page.
+  uint32 page_size = 1;
+  // Opaque continuation token returned by a preceding page.
+  optional string page_token = 2;
+  // Initial requests omit page_token. Continuations send only this opaque,
+  // integrity-protected token; snapshot fields are never client-controlled.
+}
+// Pagination metadata returned with a list response.
+message PageInfo {
+  // Opaque token for the next page, if more results are available.
+  optional string next_page_token = 1;
+  // Total matching results when the server can provide it.
+  optional uint64 total_size = 2;
+  // A response always identifies the read snapshot used by its traversal.
+  PageSnapshot snapshot = 3;
+}
+// Selects the ordering used to list Issues.
+enum IssueSort {
+  ISSUE_SORT_UNSPECIFIED = 0;
+  ISSUE_SORT_CANONICAL_READY = 1;
+  ISSUE_SORT_UPDATED_DESC = 2;
+  ISSUE_SORT_CREATED_ASC = 3;
+  ISSUE_SORT_CREATED_DESC = 4;
+}
+// Optional criteria used to restrict a list of Issues.
+message IssueFilter {
+  repeated IssueState states = 1;
+  repeated IssueKind kinds = 2;
+  repeated IssuePriority priorities = 3;
+  repeated string labels_all = 4;
+  optional string text_query = 5;
+  repeated ContextRef contexts = 6;
+  optional UtcInstant due_before = 7;
+  optional UtcInstant updated_before = 8;
+  repeated CreationBasis creation_bases = 9;
+  repeated ConfirmationStatus confirmation_statuses = 10;
+}
+// A page of Issues and its traversal metadata.
+message IssuePage { repeated Issue issues = 1; PageInfo page = 2; }
+// A page of Issue comments and its traversal metadata.
+message CommentPage { repeated IssueComment comments = 1; PageInfo page = 2; }
+// A page of Issue history entries and its traversal metadata.
+message HistoryPage { repeated IssueHistoryEntry entries = 1; PageInfo page = 2; }
+// Artifact read methods expose only artifacts whose validation_status is
+// ARTIFACT_VALIDATION_STATUS_VALIDATED. Pending/invalid artifacts are internal
+// write outcomes and must not appear in GetArtifact or ListArtifacts.
+message ArtifactPage { repeated Artifact artifacts = 1; PageInfo page = 2; }
+
+// Details explaining why a previously issued page token can no longer be used.
+message PageTokenExpired {
+  optional UtcInstant expired_at = 1;
+  string snapshot_id = 2;
+  uint64 token_read_generation = 3;
+  uint64 current_read_generation = 4;
+}
+
+// Durable record used to provide root-global idempotency for a write operation.
+message OperationRecord {
+  // Root-global idempotency identity supplied in WriteContext.
+  string downstream_operation_id = 1;
+  repeated string affected_issue_ids = 2;
+  // Present only for a single-Issue operation; use entity_revisions otherwise.
+  optional uint64 resulting_revision = 3;
+  // Canonical fingerprint of the request payload.
+  string payload_fingerprint = 4;
+  // Contract fingerprint in effect when the operation was committed.
+  string contract_fingerprint = 5;
+  UtcInstant committed_at = 6;
+  OperationScope scope = 7;
+  // Stable contract method identifier for this operation.
+  string method_key = 8;
+  repeated OperationEntityRevision entity_revisions = 9;
+  repeated OperationResultReference result_references = 10;
+  // Immutable method-specific result present when a committed operation is replayable.
+  optional OperationResultSnapshot result_snapshot = 11;
+  OperationCommitDurability commit_durability = 12;
+  OperationResultReplayability result_replayability = 13;
+  // Fingerprinting must encode this complete input, not payload alone.
+  optional OperationFingerprintInput fingerprint_input = 14;
+}
+// downstream_operation_id is root-global idempotency identity. method_key and
+// scope are deliberately included so identical payloads cannot collide across
+// methods or operation scopes.
+message OperationFingerprintInput {
+  // Root-global idempotency identity included in the fingerprint.
+  string downstream_operation_id = 1;
+  string method_key = 2;
+  OperationScope scope = 3;
+  string payload_fingerprint = 4;
+}
+// The revision produced for one entity by a multi-entity operation.
+message OperationEntityRevision {
+  string issue_id = 1;
+  string backend_id = 2;
+  uint64 resulting_revision = 3;
+}
+// Identifies an entity returned by an operation result.
+message OperationResultReference {
+  // Exactly one referenced entity identifier.
+  oneof subject {
+    string issue_id = 1;
+    string relation_id = 2;
+    string comment_id = 3;
+    string artifact_id = 4;
+  }
+}
+// These snapshots deliberately omit OperationRecord to avoid a recursive marker.
+// Immutable replayable result for an idempotent operation.
+message OperationResultSnapshot {
+  // Exactly one method-specific result representation.
+  oneof value {
+    IssueMutationSnapshot issue_mutation = 1;
+    ClaimMutationSnapshot claim_mutation = 2;
+    RelationMutationSnapshot relation_mutation = 3;
+    CommentMutationSnapshot comment_mutation = 4;
+    Artifact artifact = 5;
+  }
+  // Opaque typed result emitted by a trusted Manager-only operation.  The
+  // Tracker stores the bytes in the immutable marker without importing the
+  // Manager contract; the Manager validates the method-specific schema when
+  // replaying the marker.
+  bytes manager_result_payload = 6;
+  string manager_result_schema = 7;
+  string manager_result_digest = 8;
+}
+// Replayable snapshot of an Issue mutation result.
+message IssueMutationSnapshot {
+  // Issue state after the mutation.
+  IssueDetails current = 1;
+  // State before the mutation, when it was a state transition.
+  optional IssueState previous_state = 2;
+  // Update-mask fields changed by the mutation.
+  repeated string changed_fields = 3;
+}
+// Replayable snapshot of a claim mutation result.
+message ClaimMutationSnapshot { IssueMutationSnapshot mutation = 1; }
+// Replayable snapshot of a relation mutation result.
+message RelationMutationSnapshot {
+  IssueRelation relation = 1;
+  uint64 source_revision = 2;
+  uint64 target_revision = 3;
+  // True when this snapshot represents a relation removal.
+  bool removed = 4;
+}
+// Replayable snapshot of a comment mutation result.
+message CommentMutationSnapshot { IssueComment comment = 1; uint64 issue_revision = 2; }
+// Result of an Issue mutation together with its idempotency record.
+message IssueMutation {
+  IssueDetails current = 1;
+  optional IssueState previous_state = 2;
+  repeated string changed_fields = 3;
+  OperationRecord operation = 4;
+}
+// Successful claim result; lease_handle is required for later lease operations.
+message ClaimIssueSuccess { IssueMutation mutation = 1; bytes lease_handle = 2; }
+// Result of a claim heartbeat or release operation.
+message ClaimMutation { Issue current = 1; OperationRecord operation = 2; }
+// Result of adding or removing an Issue relation.
+message RelationMutation {
+  IssueRelation relation = 1;
+  uint64 source_revision = 2;
+  uint64 target_revision = 3;
+  OperationRecord operation = 4;
+  // True when this result represents a relation removal.
+  bool removed = 5;
+}
+// Result of adding a comment to an Issue.
+message CommentMutation {
+  IssueComment comment = 1;
+  uint64 issue_revision = 2;
+  OperationRecord operation = 3;
+}
+// Metadata for a generated backup or export artifact stored under the data root.
+message Artifact {
+  // Identifier used to retrieve this artifact.
+  string artifact_id = 1;
+  // Path relative to the configured data root; not a client-supplied path.
+  string relative_path = 2;
+  // Content digest used to verify artifact integrity.
+  string digest = 3;
+  uint64 size_bytes = 4;
+  UtcInstant created_at = 5;
+  string contract_fingerprint = 6;
+  string storage_schema_fingerprint = 7;
+  // Highest tracker revision included in the artifact.
+  uint64 revision_watermark = 8;
+  ArtifactKind artifact_kind = 9;
+  string format = 10;
+  string media_type = 11;
+  string format_version = 12;
+  // GetArtifact/ListArtifacts are defined only for VALIDATED artifacts.
+  ArtifactValidationStatus validation_status = 13;
+}
+// Result of creating a tracker artifact.
+message ArtifactMutation { Artifact artifact = 1; OperationRecord operation = 2; }
+
+// Details needed to resolve an optimistic-concurrency conflict.
+message RevisionConflict {
+  uint64 expected_revision = 1;
+  uint64 current_revision = 2;
+  IssueState current_state = 3;
+  bool refetch_allowed = 4;
+}
+// Details about an active conflicting Issue claim.
+message OwnershipConflict {
+  optional ActorContext current_owner = 1;
+  optional UtcInstant lease_expires_at = 2;
+  uint64 current_revision = 3;
+}
+// Safe classification of a lease precondition failure. Raw lease handles and
+// owner credentials are never included in this diagnostic.
+message LeasePrecondition {
+  string classification = 1;
+  repeated string invalid_attributes = 2;
+  optional UtcInstant lease_expires_at = 3;
+  uint64 observed_revision = 4;
+}
+// The open Issues preventing the requested operation.
+message BlockerConflict { repeated string open_blocker_issue_ids = 1; }
+// Contract or storage schema fingerprints that failed to match.
+message SchemaConflict { string expected_fingerprint = 1; string actual_fingerprint = 2; }
+// Structured error returned by the Issue Tracker API.
+message IssueTrackerError {
+  ErrorCode code = 1;
+  string message = 2;
+  bool retryable = 3;
+  // Error-specific detail, when available for this code.
+  oneof detail {
+    RevisionConflict revision_conflict = 4;
+    OwnershipConflict ownership_conflict = 5;
+    BlockerConflict blocker_conflict = 6;
+    SchemaConflict schema_conflict = 7;
+    PageTokenExpired page_token_expired = 8;
+    LeasePrecondition lease_precondition = 9;
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "contract": "lookback-issue/v7",
+  "entity": "tracker_metadata",
+  "schema_version": "7",
+  "schema_fingerprint": "sha256:c4f85e42230c205e3b8d98cf8267c3c00109f69f534bfee788d90bd7fc408473",
+  "contract_fingerprint": "sha256:6f8af3212db576b4e224f586653654ce2911136d9a7f5164e5a8e034c6a22b6e"
+}

@@ -1,0 +1,711 @@
+syntax = "proto3";
+
+package issue_tracker.manager.v1;
+
+import "manager/v1/issue_tracker_manager_common.proto";
+import "v1/issue_tracker_common.proto";
+
+// Describes the active manager contract, capabilities, and activation state.
+message MaintenancePhaseHealth {
+  string phase = 1;
+  HealthStatus health = 2;
+  optional UtcInstant last_started_at = 3;
+  optional UtcInstant last_finished_at = 4;
+  optional UtcInstant last_failure_at = 5;
+  optional UtcInstant last_recovered_at = 6;
+  uint64 attempt_count = 7;
+  uint64 success_count = 8;
+  uint64 skipped_count = 9;
+  uint64 conflict_count = 10;
+  uint64 diagnosis_count = 11;
+  uint64 pending_gauge = 12;
+  uint64 inconsistent_gauge = 13;
+  bool permit_enabled = 14;
+  bool gauge_stale = 15;
+  repeated string diagnosis_refs = 16;
+  uint64 unconfirmed_count = 17;
+}
+
+message ContractInfo {
+  // Stable identities used by consumers to verify compatible contracts and schemas.
+  string contract_version = 1;
+  string contract_fingerprint = 2;
+  string schema_fingerprint = 3;
+  // Canonical method keys exposed by this manager.
+  repeated string method_keys = 4;
+  // Identities of the stores used to serve this contract.
+  repeated StoreIdentity store_identities = 5;
+  // Capabilities currently available from this manager instance.
+  repeated ManagerFeature features = 6;
+  // Health is runtime availability; activation indicates whether writes are allowed.
+  HealthStatus health = 7;
+  ActivationStatus activation = 8;
+  // Reasons activation is blocked; empty when activation is ready.
+  repeated ActivationBlocker activation_blockers = 9;
+  // Maximum inclusive time window accepted for root-wide audit history.
+  TimeSpan root_operation_history_max_window = 10;
+  repeated MaintenancePhaseHealth maintenance_phases = 11;
+  uint64 health_epoch = 12;
+}
+// Requests the contract information for the selected data root.
+message GetContractInfoArgs { ManagerReadContext context = 1; }
+// Returns contract information or a manager error.
+message GetContractInfoResult {
+  // Exactly one successful response or error outcome is returned.
+  oneof outcome { ContractInfo success = 1; ManagerError error = 2; }
+}
+
+// Creates a proposed candidate from extraction or manual input.
+message CreateCandidateArgs {
+  ManagerWriteContext context = 1;
+  CandidateDraft candidate = 2;
+}
+// Returns the durable operation and resulting candidate, or an error.
+message CreateCandidateResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Retrieves one candidate by its stable identifier.
+message GetCandidateArgs {
+  ManagerReadContext context = 1;
+  string candidate_id = 2;
+}
+// Returns a candidate or an error.
+message GetCandidateResult {
+  // Exactly one successful response or error outcome is returned.
+  oneof outcome { Candidate success = 1; ManagerError error = 2; }
+}
+// Lists candidates that match an optional filter and page boundary.
+message ListCandidatesArgs {
+  ManagerReadContext context = 1;
+  PageRequest page = 2;
+  CandidateFilter filter = 3;
+}
+// A page of candidates and its continuation information.
+message CandidatePage { repeated Candidate candidates = 1; PageInfo page = 2; }
+// Returns a candidate page or an error.
+message ListCandidatesResult {
+  // Exactly one successful response or error outcome is returned.
+  oneof outcome { CandidatePage success = 1; ManagerError error = 2; }
+}
+
+// Filter used by the trusted-consumer review read model. Candidate status is
+// intentionally not client-selectable: only PROPOSED and AUTO_REGISTERED
+// candidates participate in this view.
+message ReviewCandidateFilter {
+  repeated CandidateKind kinds = 1;
+  repeated CandidatePriority priorities = 2;
+  optional string extraction_run_id = 3;
+  optional string text_query = 4;
+  optional issue_tracker.v1.SourceEvidenceRef source_evidence = 5;
+}
+
+// Lists candidates that require review after joining manager mappings and
+// backend Issue lifecycle state. This is a read-only trusted-consumer view.
+message ListReviewCandidatesArgs {
+  ManagerReadContext context = 1;
+  PageRequest page = 2;
+  ReviewCandidateFilter filter = 3;
+}
+
+enum ReviewCandidateIntegrity {
+  REVIEW_CANDIDATE_INTEGRITY_UNSPECIFIED = 0;
+  REVIEW_CANDIDATE_INTEGRITY_NORMAL = 1;
+  REVIEW_CANDIDATE_INTEGRITY_MAPPING_MISSING = 2;
+  REVIEW_CANDIDATE_INTEGRITY_MAPPING_INVALID = 3;
+  REVIEW_CANDIDATE_INTEGRITY_ISSUE_NOT_FOUND = 4;
+  REVIEW_CANDIDATE_INTEGRITY_UNKNOWN_ISSUE_STATE = 5;
+}
+
+enum ReviewCandidateResolutionState {
+  REVIEW_CANDIDATE_RESOLUTION_STATE_UNSPECIFIED = 0;
+  REVIEW_CANDIDATE_RESOLUTION_STATE_ACTIONABLE = 1;
+  REVIEW_CANDIDATE_RESOLUTION_STATE_RESOLUTION_PENDING = 2;
+}
+
+message ReviewIssueSummary {
+  string issue_id = 1;
+  issue_tracker.v1.IssueState lifecycle_state = 2;
+  uint64 revision = 3;
+}
+
+message ReviewCandidateRow {
+  Candidate candidate = 1;
+  optional IssueMapping mapping = 2;
+  optional ReviewIssueSummary associated_issue = 3;
+  ReviewCandidateIntegrity integrity = 4;
+  ReviewCandidateResolutionState resolution_state = 5;
+}
+
+message ReviewCandidatePage {
+  repeated ReviewCandidateRow rows = 1;
+  PageInfo page = 2;
+  CompositePageSnapshot composite_snapshot = 3;
+}
+
+message ListReviewCandidatesResult {
+  oneof outcome { ReviewCandidatePage success = 1; ManagerError error = 2; }
+}
+// Updates selected mutable fields of a candidate.
+message UpdateCandidateArgs {
+  ManagerWriteContext context = 1;
+  string candidate_id = 2;
+  // Enumerates patch fields to replace; omitted fields are left unchanged.
+  repeated CandidateField update_mask = 3;
+  // When supplied, the update fails if the current revision differs.
+  optional uint64 expected_revision = 4;
+  CandidatePatch patch = 5;
+}
+// Returns the resulting mutation or an error.
+message UpdateCandidateResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Creates a new canonical Issue from a candidate.
+message CreateIssueResolution {
+  issue_tracker.v1.IssueDraft issue = 1;
+  ResolutionBasis basis = 2;
+}
+
+// Confirms an existing unreviewed Issue as the canonical resolution target.
+message ConfirmAssociatedIssueResolution {
+  string issue_id = 1;
+  optional uint64 expected_revision = 2;
+  repeated ManagerIssueField update_mask = 3;
+  ManagerIssuePatch patch = 4;
+  ResolutionBasis basis = 5;
+  optional issue_tracker.v1.IssueState target_state = 6;
+  // Required when target_state is a terminal lifecycle state.
+  oneof terminal_report {
+    issue_tracker.v1.CompletionReport completion = 7;
+    issue_tracker.v1.CancellationReport cancellation = 8;
+  }
+  // Filled exclusively by server admission from the target Issue and Candidate.
+  repeated issue_tracker.v1.SourceEvidenceRef resolved_source_evidence = 9;
+}
+
+// Rejects an unassociated proposed candidate without creating an Issue.
+message RejectResolution {
+  ResolutionReasonCategory reason_category = 1;
+  optional string rationale = 2;
+}
+
+// Cancels the canonical Issue associated with a false-positive candidate.
+message CancelAssociatedIssueResolution {
+  string issue_id = 1;
+  optional uint64 expected_issue_revision = 2;
+  // The immutable mapping must match both values at admission.
+  string expected_mapping_candidate_id = 3;
+  string expected_mapping_issue_id = 4;
+  issue_tracker.v1.CancellationReport cancellation_report = 5;
+  ResolutionReasonCategory reason_category = 6;
+  optional string rationale = 7;
+}
+
+// Identifies a candidate merge target and its candidate CAS precondition.
+message CandidateMergeTarget {
+  string candidate_id = 1;
+  optional uint64 expected_revision = 2;
+}
+
+// Identifies an Issue merge target and its Issue CAS precondition.
+message IssueMergeTarget {
+  string issue_id = 1;
+  optional uint64 expected_revision = 2;
+  // Filled exclusively by server admission after reading the target Issue.
+  repeated MetadataEntry resolved_provenance_metadata = 3;
+  // Server-resolved target-first union of the Issue and source Candidate
+  // references. This is server-owned and is not accepted from a client.
+  repeated issue_tracker.v1.SourceEvidenceRef resolved_source_evidence = 4;
+}
+
+// Cancels a source candidate's associated Issue as part of a merge.
+message SourceAssociatedIssueCancellation {
+  string expected_mapping_candidate_id = 1;
+  string expected_mapping_issue_id = 2;
+  optional uint64 expected_issue_revision = 3;
+  issue_tracker.v1.CancellationReport cancellation_report = 4;
+}
+
+// Supersedes a candidate and merges its source references into its target.
+message MergeResolution {
+  oneof target {
+    CandidateMergeTarget candidate = 1;
+    IssueMergeTarget issue = 2;
+  }
+  optional SourceAssociatedIssueCancellation source_issue_cancellation = 3;
+  // Required authorization for the merge decision.
+  ResolutionBasis basis = 4;
+}
+
+// Resolves one candidate by exactly one explicit decision.
+message ResolveCandidateArgs {
+  ManagerWriteContext context = 1;
+  string candidate_id = 2;
+  // Required by the resolution contract; zero is a valid revision.
+  optional uint64 expected_revision = 3;
+  optional string causal_parent = 4;
+  oneof decision {
+    CreateIssueResolution create_issue = 5;
+    ConfirmAssociatedIssueResolution confirm_associated_issue = 6;
+    RejectResolution reject = 7;
+    CancelAssociatedIssueResolution cancel_associated_issue = 8;
+    MergeResolution merge = 9;
+  }
+}
+
+// Returns a durable resolution receipt after admission, or an admission error.
+message ResolveCandidateResult {
+  oneof outcome {
+    ResolutionReceipt success = 1;
+    ManagerError error = 2;
+  }
+}
+
+// Creates an extraction run for a source and request schema.
+message CreateExtractionRunArgs { ManagerWriteContext context = 1; ExtractionRunDraft run = 2; }
+// Returns the resulting extraction-run mutation or an error.
+message CreateExtractionRunResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Retrieves an extraction run by its stable identifier.
+message GetExtractionRunArgs { ManagerReadContext context = 1; string run_id = 2; }
+// Returns an extraction run or an error.
+message GetExtractionRunResult {
+  // Exactly one successful response or error outcome is returned.
+  oneof outcome { ExtractionRun success = 1; ManagerError error = 2; }
+}
+// Lists extraction runs that match an optional filter and page boundary.
+message ListExtractionRunsArgs {
+  ManagerReadContext context = 1;
+  PageRequest page = 2;
+  ExtractionRunFilter filter = 3;
+}
+// A page of extraction runs and its continuation information.
+message ExtractionRunPage { repeated ExtractionRun runs = 1; PageInfo page = 2; }
+// Returns an extraction-run page or an error.
+message ListExtractionRunsResult {
+  // Exactly one successful response or error outcome is returned.
+  oneof outcome { ExtractionRunPage success = 1; ManagerError error = 2; }
+}
+// Advances an extraction run to a valid next state.
+message AdvanceExtractionRunArgs {
+  ManagerWriteContext context = 1;
+  string run_id = 2;
+  ExtractionRunAdvance advance = 3;
+  // When supplied, the transition fails if the run revision differs.
+  optional uint64 expected_revision = 4;
+}
+// Returns the resulting extraction-run mutation or an error.
+message AdvanceExtractionRunResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Resumes a paused or recoverable extraction run.
+message ResumeExtractionRunArgs {
+  ManagerWriteContext context = 1;
+  string run_id = 2;
+  // When supplied, resumption fails if the run revision differs.
+  optional uint64 expected_revision = 3;
+}
+// Returns the resulting extraction-run mutation or an error.
+message ResumeExtractionRunResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+
+// Retrieves a durable operation by its stable identifier.
+message GetOperationArgs { ManagerReadContext context = 1; string operation_id = 2; }
+// Returns a durable operation or an error.
+message GetOperationResult {
+  // Exactly one successful response or error outcome is returned.
+  oneof outcome { DurableOperation success = 1; ManagerError error = 2; }
+}
+// Requests another attempt for a retryable durable operation.
+message RetryOperationArgs {
+  ManagerWriteContext context = 1;
+  string operation_id = 2;
+  // When supplied, retry fails if the operation generation differs.
+  optional uint64 expected_generation = 3;
+}
+// Returns the resulting operation mutation or an error.
+message RetryOperationResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Reconciles a durable operation against its downstream outcome.
+message ReconcileOperationArgs {
+  ManagerWriteContext context = 1;
+  string operation_id = 2;
+  // When supplied, reconciliation fails if the operation generation differs.
+  optional uint64 expected_generation = 3;
+}
+// Returns the resulting operation mutation or an error.
+message ReconcileOperationResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Retrieves canonical backend issue data together with manager sync state.
+message GetIssueWithSyncArgs { ManagerReadContext context = 1; string issue_id = 2; }
+// Returns an issue with sync information or an error.
+message GetIssueWithSyncResult {
+  // Exactly one successful response or error outcome is returned.
+  oneof outcome { IssueWithSync success = 1; ManagerError error = 2; }
+}
+// Retrieves one canonical Issue together with a page of its inbound and
+// outbound relations.
+message GetIssueRelationsArgs {
+  ManagerReadContext context = 1;
+  string issue_id = 2;
+  PageRequest page = 3;
+}
+message IssueRelationsWithSync {
+  IssueWithSync issue = 1;
+  repeated issue_tracker.v1.IssueRelation relations = 2;
+  PageInfo page = 3;
+}
+message GetIssueRelationsResult {
+  oneof outcome { IssueRelationsWithSync success = 1; ManagerError error = 2; }
+}
+// Lists canonical Issues together with synchronization state. Both filters are
+// applied conjunctively by the server.
+message ListIssuesWithSyncArgs {
+  ManagerReadContext context = 1;
+  PageRequest page = 2;
+  issue_tracker.v1.IssueFilter issue_filter = 3;
+  IssueWithSyncFilter sync_filter = 4;
+  issue_tracker.v1.IssueSort sort = 5;
+}
+// Returns a page of Issues with sync information or an error.
+message ListIssuesWithSyncResult {
+  // Exactly one successful response or error outcome is returned.
+  oneof outcome { IssueWithSyncPage success = 1; ManagerError error = 2; }
+}
+
+// Lists durable manager operations for audit display.
+message ListOperationHistoryArgs {
+  ManagerReadContext context = 1;
+  PageRequest page = 2;
+  OperationHistoryFilter filter = 3;
+  // Defaults to true for backwards compatibility. When false, the server
+  // omits the COUNT(*) query and leaves PageInfo.total_size unset.
+  optional bool include_total_size = 4;
+}
+message ListOperationHistoryResult {
+  oneof outcome { OperationHistoryPage success = 1; ManagerError error = 2; }
+}
+
+// Lists integrity diagnoses found by ownership maintenance. This read is
+// exposed only by the trusted-consumer boundary; worker/control listeners do
+// not publish it.
+message ListOwnershipDiagnosticsArgs {
+  ManagerReadContext context = 1;
+  PageRequest page = 2;
+  optional string target_kind = 3;
+  optional string target_id = 4;
+}
+message OwnershipDiagnosticsPage {
+  repeated OwnershipIntegrityDiagnosis diagnoses = 1;
+  PageInfo page = 2;
+}
+message ListOwnershipDiagnosticsResult {
+  oneof outcome {
+    OwnershipDiagnosticsPage success = 1;
+    ManagerError error = 2;
+  }
+}
+
+// Reads a bounded page of native issue history. The issue ID is always
+// required; the Manager/downstream operation pair, when present, binds this
+// read to one immutable Manager operation without filtering out earlier Issue
+// history needed for audit and completion verification.
+message ListIssueHistoryArgs {
+  ManagerReadContext context = 1;
+  string issue_id = 2;
+  PageRequest page = 3;
+  optional string manager_operation_id = 4;
+  optional string downstream_operation_id = 5;
+}
+message ListIssueHistoryResult {
+  oneof outcome {
+    issue_tracker.v1.HistoryPage success = 1;
+    ManagerError error = 2;
+  }
+}
+
+// Reads a native Tracker operation only through its exact Manager operation
+// and canonical Issue scope.
+message GetDownstreamOperationArgs {
+  ManagerReadContext context = 1;
+  string issue_id = 2;
+  string manager_operation_id = 3;
+  string downstream_operation_id = 4;
+}
+message GetDownstreamOperationResult {
+  oneof outcome {
+    TrustedDownstreamOperation success = 1;
+    ManagerError error = 2;
+  }
+}
+
+// Registers the effective worker-selection policy for the endpoint-bound
+// Gateway. The endpoint, rather than this request body, determines Gateway ID.
+message RegisterGatewayArgs {
+  ManagerWriteContext context = 1;
+  WorkEligibilityPolicy policy = 2;
+}
+message GatewayRegistration {
+  string gateway_id = 1;
+  WorkEligibilityPolicy policy = 2;
+  string policy_fingerprint = 3;
+  uint64 registration_generation = 4;
+}
+message RegisterGatewayResult {
+  oneof outcome { GatewayRegistration success = 1; ManagerError error = 2; }
+}
+
+// Reads the current registration for the endpoint-bound Gateway.
+message GetGatewayRegistrationArgs { ManagerReadContext context = 1; }
+message GetGatewayRegistrationResult {
+  oneof outcome { GatewayRegistration success = 1; ManagerError error = 2; }
+}
+
+// Each canonical backend write has an explicit manager key and typed payload.
+// Keeping the manager context outside the backend args lets the manager own
+// idempotency and audit validation without introducing a free-form dispatcher.
+message ProvenanceSourceRef {
+  oneof source {
+    string candidate_id = 1;
+    string issue_id = 2;
+  }
+  optional uint64 expected_revision = 3;
+}
+
+message CreateIssueArgs {
+  ManagerWriteContext context = 1;
+  string issue_id = 2;
+  issue_tracker.v1.IssueDraft issue = 3;
+  // Optional proof required when creation relies on strong detection.
+  optional StrongDetectionProof strong_detection_proof = 4;
+  // Server-resolved immutable provenance sources. Admission materializes their
+  // metadata; their request values are retained only for exact replay checks.
+  repeated ProvenanceSourceRef provenance_sources = 5;
+}
+// Returns the resulting issue-creation mutation or an error.
+message CreateIssueResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Updates selected mutable fields of a canonical backend issue.
+message UpdateIssueArgs {
+  ManagerWriteContext context = 1;
+  string issue_id = 2;
+  // When supplied, the update fails if the backend issue revision differs.
+  optional uint64 expected_revision = 3;
+  // Enumerates patch fields to replace; omitted fields are left unchanged.
+  repeated ManagerIssueField update_mask = 4;
+  ManagerIssuePatch patch = 5;
+  optional issue_tracker.v1.IssueState target_state = 6;
+  // Required when target_state is a terminal lifecycle state.
+  oneof terminal_report {
+    issue_tracker.v1.CompletionReport completion = 7;
+    issue_tracker.v1.CancellationReport cancellation = 8;
+  }
+}
+// Returns the resulting issue-update mutation or an error.
+message UpdateIssueResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Transitions a canonical issue to a valid target state.
+message TransitionIssueArgs {
+  ManagerWriteContext context = 1;
+  string issue_id = 2;
+  // When supplied, the transition fails if the backend issue revision differs.
+  optional uint64 expected_revision = 3;
+  issue_tracker.v1.IssueState target_state = 4;
+  // Required by transitions that mutate an active claim.
+  optional bytes lease_handle = 5;
+  // Required when the target state defers review.
+  optional UtcInstant deferred_review_at = 6;
+  // Claim revision used to reject stale claim transitions.
+  optional uint64 claim_revision = 7;
+  // Supplies the report required by the selected terminal target state.
+  oneof terminal_report {
+    issue_tracker.v1.CompletionReport completion = 8;
+    issue_tracker.v1.CancellationReport cancellation = 9;
+  }
+  // Present only for the dedicated completion-to-review path. Generic worker
+  // Transition requests never carry this evidence envelope.
+  issue_tracker.v1.AwaitingReviewCompletion awaiting_review = 10;
+}
+// Returns the resulting issue-transition mutation or an error.
+message TransitionIssueResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+enum IssueAdminAction {
+  ISSUE_ADMIN_ACTION_UNSPECIFIED = 0;
+  ISSUE_ADMIN_ACTION_COMPLETE = 1;
+  ISSUE_ADMIN_ACTION_CANCEL = 2;
+  ISSUE_ADMIN_ACTION_RECOVER = 3;
+  ISSUE_ADMIN_ACTION_REVOKE = 4;
+}
+message DependencyOverride { bool enabled = 1; string reason = 2; }
+message InconsistentClaimResolution { bool clear = 1; string reason = 2; }
+message ApplyIssueAdminActionArgs {
+  ManagerWriteContext context = 1;
+  string issue_id = 2;
+  optional uint64 expected_revision = 3;
+  IssueAdminAction action = 4;
+  oneof terminal_report {
+    issue_tracker.v1.CompletionReport completion = 5;
+    issue_tracker.v1.CancellationReport cancellation = 6;
+  }
+  optional DependencyOverride dependency_override = 7;
+  optional InconsistentClaimResolution inconsistent_claim_resolution = 8;
+  // Optional reference to the integrity diagnosis this repair is intended to
+  // resolve. The reference is validated against the Manager-owned diagnosis
+  // row and is never treated as caller-supplied proof.
+  optional OwnershipIntegrityDiagnosisReference ownership_diagnosis = 9;
+}
+message ApplyIssueAdminActionResult {
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Resolves a delivery-unknown issue operation without replaying its write.
+message ResolveIssueOperationArgs {
+  ManagerWriteContext context = 1;
+  string issue_id = 2;
+  string operation_id = 3;
+  // Both compare-and-swap values are mandatory.  `optional` preserves wire
+  // presence so an omitted value cannot be confused with an explicit zero
+  // (Issue revision zero is valid for a newly-created Issue).
+  optional uint64 expected_operation_generation = 4;
+  optional uint64 expected_revision = 5;
+  IssueOperationResolutionDecision decision = 6;
+  // References are server-owned marker identifiers, never caller-supplied
+  // external evidence.
+  repeated string evidence_refs = 7;
+  // Evidence is mandatory in EVIDENCE_CONFIRMATION mode and optional in
+  // HUMAN_ARBITRATION mode.  The mode is explicit so a human decision is not
+  // silently recorded as a server-proven fact.
+  IssueOperationResolutionMode mode = 8;
+  IssueOperationArbitrationOutcome arbitration_outcome = 9;
+  bool uncertainty_acknowledged = 10;
+  string arbitration_reason = 11;
+}
+message ResolveIssueOperationResult {
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Claims an issue for exclusive work and requests a lease duration.
+message ClaimIssueArgs {
+  ManagerWriteContext context = 1;
+  string issue_id = 2;
+  // When supplied, claiming fails if the backend issue revision differs.
+  optional uint64 expected_revision = 3;
+  // Requested lease duration; the server applies its configured bounds.
+  optional TimeSpan requested_lease = 4;
+  // Gateway-only optimistic guard for the policy, mapping, and Evidence
+  // snapshot used to admit this claim. A changed manager generation requires
+  // the Gateway endpoint to re-evaluate eligibility before admission.
+  optional uint64 gateway_eligibility_generation = 5;
+}
+// Returns the claim mutation and one-time lease handle, or an error.
+message ClaimIssueResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Extends the active claim lease for an issue.
+message HeartbeatIssueClaimArgs {
+  ManagerWriteContext context = 1;
+  string issue_id = 2;
+  // When supplied, the heartbeat fails if the backend issue revision differs.
+  optional uint64 expected_revision = 3;
+  // Claim revision used to reject stale lease operations.
+  optional uint64 claim_revision = 4;
+  // Opaque handle returned by ClaimIssue; never persist or disclose it.
+  bytes lease_handle = 5;
+  // Requested extension; the server applies its configured bounds.
+  optional TimeSpan requested_extension = 6;
+}
+// Returns the resulting claim mutation or an error.
+message HeartbeatIssueClaimResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Releases an active issue claim; an in-progress Issue returns to OPEN atomically.
+message ReleaseIssueClaimArgs {
+  ManagerWriteContext context = 1;
+  string issue_id = 2;
+  // When supplied, release fails if the backend issue revision differs.
+  optional uint64 expected_revision = 3;
+  // Claim revision used to reject stale release operations.
+  optional uint64 claim_revision = 4;
+  // Opaque handle returned by ClaimIssue.
+  bytes lease_handle = 5;
+}
+// Returns the resulting claim mutation or an error.
+message ReleaseIssueClaimResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Reconciles an expired claim after its lease can no longer be used.
+message ReconcileExpiredClaimArgs {
+  ManagerWriteContext context = 1;
+  string issue_id = 2;
+  // When supplied, reconciliation fails if the backend issue revision differs.
+  optional uint64 expected_revision = 3;
+  // Claim revision used to reject stale reconciliation requests.
+  optional uint64 claim_revision = 4;
+}
+// Returns the resulting claim reconciliation mutation or an error.
+message ReconcileExpiredClaimResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Creates a typed relation between two canonical backend issues.
+message AddIssueRelationArgs {
+  ManagerWriteContext context = 1;
+  string relation_id = 2;
+  issue_tracker.v1.RelationKind kind = 3;
+  string source_issue_id = 4;
+  // Optional optimistic-lock preconditions for both related issues.
+  optional uint64 source_expected_revision = 5;
+  string target_issue_id = 6;
+  optional uint64 target_expected_revision = 7;
+}
+// Returns the resulting relation mutation or an error.
+message AddIssueRelationResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Removes a relation between two canonical backend issues.
+message RemoveIssueRelationArgs {
+  ManagerWriteContext context = 1;
+  string relation_id = 2;
+  string source_issue_id = 3;
+  // Optional optimistic-lock preconditions for both related issues.
+  optional uint64 source_expected_revision = 4;
+  string target_issue_id = 5;
+  optional uint64 target_expected_revision = 6;
+}
+// Returns the resulting relation mutation or an error.
+message RemoveIssueRelationResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}
+// Adds a comment to a canonical backend issue.
+message AddIssueCommentArgs {
+  ManagerWriteContext context = 1;
+  string issue_id = 2;
+  // When supplied, adding the comment fails if the issue revision differs.
+  optional uint64 expected_revision = 3;
+  string comment_id = 4;
+  string body = 5;
+}
+// Returns the resulting comment mutation or an error.
+message AddIssueCommentResult {
+  // Exactly one successful mutation or error outcome is returned.
+  oneof outcome { ManagerMutation success = 1; ManagerError error = 2; }
+}

@@ -1,0 +1,9 @@
+syntax = "proto3";
+package issue_tracker.rpc.v1;
+import "manager/v1/issue_tracker_manager_methods.proto";
+service ManagerOperationService {
+  rpc GetOperation(issue_tracker.manager.v1.GetOperationArgs) returns (issue_tracker.manager.v1.GetOperationResult);
+  rpc ListOperationHistory(issue_tracker.manager.v1.ListOperationHistoryArgs) returns (issue_tracker.manager.v1.ListOperationHistoryResult);
+  rpc RetryOperation(issue_tracker.manager.v1.RetryOperationArgs) returns (issue_tracker.manager.v1.RetryOperationResult);
+  rpc ReconcileOperation(issue_tracker.manager.v1.ReconcileOperationArgs) returns (issue_tracker.manager.v1.ReconcileOperationResult);
+}

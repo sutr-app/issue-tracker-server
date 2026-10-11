@@ -1,0 +1,67 @@
+syntax = "proto3";
+package issue_tracker.v1;
+import "v1/issue_tracker_common.proto";
+import "manager/v1/issue_tracker_manager_settings.proto";
+
+// Configures storage, compatibility checks, and operational limits.
+message IssueTrackerRunnerSettings {
+  // Directory that owns the tracker data and its exclusive lock.
+  string data_root = 1;
+  // Required fingerprint of the loaded public contract.
+  string expected_contract_fingerprint = 2;
+  // Required fingerprint of the on-disk storage schema.
+  string expected_storage_schema_fingerprint = 3;
+  LeasePolicy lease_policy = 4;
+  PaginationPolicy pagination_policy = 5;
+  SecretFilterMode secret_filter_mode = 6;
+  ResourceLimits resource_limits = 7;
+  // Manager methods are unavailable unless this independently validated
+  // configuration is supplied.
+  optional issue_tracker.manager.v1.IssueTrackerManagerSettings manager_settings = 8;
+  // Resident ownership recovery cadence. A zero value selects the default
+  // 30-second interval.
+  optional TimeSpan ownership_maintenance_interval = 9;
+  // Maximum raw candidates and recoveries evaluated per maintenance cycle;
+  // zero selects the default 100 and values above 100 are rejected.
+  uint32 ownership_recovery_batch_size = 10;
+}
+// Limits the size and cardinality of accepted or generated data.
+message ResourceLimits {
+  // Byte limits for ordinary strings, comment bodies, URIs, tokens, and lease handles.
+  uint64 max_string_bytes = 1;
+  uint64 max_body_bytes = 2;
+  uint64 max_uri_bytes = 3;
+  uint64 max_token_bytes = 4;
+  uint64 max_handle_bytes = 5;
+  // Maximum number of entries in one repeated field.
+  uint64 max_repeated_item_count = 6;
+  // Limits for an exported artifact and its item count.
+  uint64 max_export_bytes = 7;
+  uint64 max_export_item_count = 8;
+  // Limits for a stored artifact and the number of retained artifacts.
+  uint64 max_artifact_bytes = 9;
+  uint64 max_artifact_count = 10;
+  // Maximum items scanned to calculate a requested page total.
+  uint64 max_total_count_scan_items = 11;
+}
+// Configures claim durations and heartbeat limits.
+message LeasePolicy {
+  // Duration used when a claim request omits its requested lease.
+  TimeSpan default_lease = 1;
+  // Lower and upper bounds accepted for a requested lease.
+  TimeSpan minimum_lease = 2;
+  TimeSpan maximum_lease = 3;
+  // Longest interval allowed between claim heartbeats.
+  TimeSpan maximum_heartbeat_interval = 4;
+}
+// Configures default and maximum page sizes for list operations.
+message PaginationPolicy {
+  uint32 default_page_size = 1;
+  uint32 maximum_page_size = 2;
+}
+// Selects how detected secrets are handled in input and generated artifacts.
+enum SecretFilterMode {
+  SECRET_FILTER_MODE_UNSPECIFIED = 0;
+  // Rejects data when secret filtering cannot safely complete.
+  SECRET_FILTER_MODE_FAIL_CLOSED = 1;
+}

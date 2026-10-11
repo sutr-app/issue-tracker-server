@@ -1,0 +1,10 @@
+syntax = "proto3";
+package issue_tracker.rpc.v1;
+import "manager/v1/issue_tracker_manager_methods.proto";
+service ExtractionRunService {
+  rpc CreateExtractionRun(issue_tracker.manager.v1.CreateExtractionRunArgs) returns (issue_tracker.manager.v1.CreateExtractionRunResult);
+  rpc GetExtractionRun(issue_tracker.manager.v1.GetExtractionRunArgs) returns (issue_tracker.manager.v1.GetExtractionRunResult);
+  rpc ListExtractionRuns(issue_tracker.manager.v1.ListExtractionRunsArgs) returns (issue_tracker.manager.v1.ListExtractionRunsResult);
+  rpc AdvanceExtractionRun(issue_tracker.manager.v1.AdvanceExtractionRunArgs) returns (issue_tracker.manager.v1.AdvanceExtractionRunResult);
+  rpc ResumeExtractionRun(issue_tracker.manager.v1.ResumeExtractionRunArgs) returns (issue_tracker.manager.v1.ResumeExtractionRunResult);
+}
