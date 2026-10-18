@@ -292,6 +292,93 @@ async fn dispatch_review_page(
     .expect("decode review candidate page")
 }
 
+/// Follows continuation tokens; test managers may cap pages at one row.
+async fn collect_review_rows(
+    manager: &Arc<tokio::sync::Mutex<IssueTrackerManager>>,
+    tracker: &crate::tracker::Tracker,
+    context: crate::proto_types::manager_v1::ManagerReadContext,
+) -> Vec<crate::proto_types::manager_v1::ReviewCandidateRow> {
+    use crate::proto_types::manager_v1::list_review_candidates_result::Outcome;
+    let mut rows = Vec::new();
+    let mut page_token = None;
+    loop {
+        let args = crate::proto_types::manager_v1::ListReviewCandidatesArgs {
+            context: Some(context.clone()),
+            page: Some(crate::proto_types::manager_v1::PageRequest {
+                page_token: page_token.take(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        match dispatch_review_page(manager, tracker, &args)
+            .await
+            .outcome
+            .expect("review candidate outcome")
+        {
+            Outcome::Success(page) => {
+                rows.extend(page.rows);
+                page_token = page.page.and_then(|page| page.next_page_token);
+            }
+            Outcome::Error(error) => panic!("unexpected review candidate read error: {error:?}"),
+        }
+        if page_token.is_none() {
+            return rows;
+        }
+    }
+}
+
+fn store_candidate(
+    manager: &mut IssueTrackerManager,
+    candidate: &crate::proto_types::manager_v1::Candidate,
+) {
+    manager
+        .storage_mut()
+        .repository()
+        .put_proto(
+            crate::manager::repository::EntityKind::Candidate,
+            &candidate.candidate_id,
+            0,
+            "issue_tracker.manager.v1.Candidate",
+            candidate,
+        )
+        .expect("store candidate");
+}
+
+fn store_auto_registered_candidate_with_mapping(
+    manager: &mut IssueTrackerManager,
+    config: &ManagerConfig,
+    candidate_id: &str,
+    issue_id: uuid::Uuid,
+    revision: u64,
+) {
+    let candidate = crate::proto_types::manager_v1::Candidate {
+        candidate_id: candidate_id.into(),
+        status: crate::proto_types::manager_v1::CandidateStatus::AutoRegistered as i32,
+        ..Default::default()
+    };
+    store_candidate(manager, &candidate);
+    let mapping = crate::proto_types::manager_v1::IssueMapping {
+        issue_id: issue_id.to_string(),
+        candidate_id: Some(candidate.candidate_id),
+        backend_id: issue_id.to_string(),
+        revision,
+        backend_contract_fingerprint: config.taskchampion_identity().contract_fingerprint.clone(),
+        manager_contract_fingerprint: config.manager_identity().contract_fingerprint.clone(),
+        ..Default::default()
+    };
+    manager
+        .storage_mut()
+        .repository()
+        .put_proto(
+            crate::manager::repository::EntityKind::IssueMapping,
+            &mapping.issue_id,
+            0,
+            "issue_tracker.manager.v1.IssueMapping",
+            &mapping,
+        )
+        .expect("store mapping");
+}
+
 fn ownership_recovery_state(
     issue_id: &str,
     readmission_number: u64,
@@ -2326,6 +2413,144 @@ async fn review_candidate_read_model_excludes_terminal_auto_registered_issue() {
         crate::proto_types::manager_v1::list_review_candidates_result::Outcome::Error(error) => {
             panic!("unexpected review candidate read error: {error:?}")
         }
+    }
+}
+
+#[tokio::test]
+async fn review_candidate_list_classifies_present_and_missing_associated_issues() {
+    let tracker_root = tempdir().expect("tracker root");
+    let tracker = crate::tracker::Tracker::open(tracker_root.path())
+        .await
+        .expect("open tracker");
+    let present = tracker
+        .create("review-associated-present", "present issue")
+        .await
+        .expect("create issue");
+    let missing_issue_id = uuid::Uuid::new_v4();
+    let (config, mut manager) = manager_for_test_with_payload_limit();
+    store_auto_registered_candidate_with_mapping(
+        &mut manager,
+        &config,
+        "candidate-review-present",
+        present.id,
+        present.revision,
+    );
+    store_auto_registered_candidate_with_mapping(
+        &mut manager,
+        &config,
+        "candidate-review-missing",
+        missing_issue_id,
+        0,
+    );
+    let manager = Arc::new(tokio::sync::Mutex::new(manager));
+    let rows = collect_review_rows(
+        &manager,
+        &tracker,
+        review_context(&config, "review-associated"),
+    )
+    .await;
+    let row = |candidate_id: &str| {
+        rows.iter()
+            .find(|row| {
+                row.candidate
+                    .as_ref()
+                    .is_some_and(|candidate| candidate.candidate_id == candidate_id)
+            })
+            .unwrap_or_else(|| panic!("missing row for {candidate_id}: {rows:?}"))
+    };
+    let present_row = row("candidate-review-present");
+    assert_eq!(
+        present_row.integrity,
+        crate::proto_types::manager_v1::ReviewCandidateIntegrity::Normal as i32
+    );
+    assert_eq!(
+        present_row
+            .associated_issue
+            .as_ref()
+            .expect("associated issue")
+            .issue_id,
+        present.id.to_string()
+    );
+    let missing_row = row("candidate-review-missing");
+    assert_eq!(
+        missing_row.integrity,
+        crate::proto_types::manager_v1::ReviewCandidateIntegrity::IssueNotFound as i32
+    );
+    assert!(missing_row.associated_issue.is_none());
+}
+
+#[tokio::test]
+async fn review_candidate_continuation_is_served_from_the_pin_without_rereading_candidates() {
+    use crate::proto_types::manager_v1::list_review_candidates_result::Outcome;
+    let tracker_root = tempdir().expect("tracker root");
+    let tracker = crate::tracker::Tracker::open(tracker_root.path())
+        .await
+        .expect("open tracker");
+    let (config, mut manager) = manager_for_test_with_payload_limit();
+    for candidate_id in ["candidate-pin-only-a", "candidate-pin-only-b"] {
+        store_candidate(
+            &mut manager,
+            &crate::proto_types::manager_v1::Candidate {
+                candidate_id: candidate_id.into(),
+                status: crate::proto_types::manager_v1::CandidateStatus::Proposed as i32,
+                ..Default::default()
+            },
+        );
+    }
+    let manager = Arc::new(tokio::sync::Mutex::new(manager));
+    let first_args = crate::proto_types::manager_v1::ListReviewCandidatesArgs {
+        context: Some(review_context(&config, "review-pin-only")),
+        ..Default::default()
+    };
+    let token = match dispatch_review_page(&manager, &tracker, &first_args)
+        .await
+        .outcome
+        .expect("first page outcome")
+    {
+        Outcome::Success(page) => page
+            .page
+            .and_then(|page| page.next_page_token)
+            .expect("continuation token"),
+        Outcome::Error(error) => panic!("unexpected first page error: {error:?}"),
+    };
+    // A corrupt stored candidate would fail a fresh snapshot; the pinned
+    // continuation must not depend on re-reading candidate rows.
+    manager
+        .lock()
+        .await
+        .storage_mut()
+        .write(|transaction, _stamp| {
+            transaction.execute(
+                "UPDATE manager_entity SET payload_digest = 'corrupt' WHERE entity_kind = 'candidate'",
+                [],
+            )?;
+            Ok(())
+        })
+        .expect("corrupt candidate digests");
+
+    let next_args = crate::proto_types::manager_v1::ListReviewCandidatesArgs {
+        context: first_args.context.clone(),
+        page: Some(crate::proto_types::manager_v1::PageRequest {
+            page_token: Some(token),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    match dispatch_review_page(&manager, &tracker, &next_args)
+        .await
+        .outcome
+        .expect("continuation outcome")
+    {
+        Outcome::Success(page) => {
+            let ids = page
+                .rows
+                .iter()
+                .filter_map(|row| row.candidate.as_ref())
+                .map(|candidate| candidate.candidate_id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(ids, vec!["candidate-pin-only-b"]);
+        }
+        Outcome::Error(error) => panic!("unexpected continuation error: {error:?}"),
     }
 }
 

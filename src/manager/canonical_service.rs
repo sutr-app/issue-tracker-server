@@ -56,7 +56,10 @@ pub(crate) struct CanonicalReadService<'a> {
 /// SQLite guard before awaiting the Tracker operation.
 pub(crate) struct CanonicalReadSnapshot {
     generation: u64,
-    operations: Vec<pb::DurableOperation>,
+    /// Ready-affecting operations grouped by sync subject, converted once so
+    /// composing N Issues does not re-convert every operation N times. A
+    /// conversion failure is kept so composition still fails as a whole.
+    sync_operations_by_subject: Result<HashMap<String, Vec<SyncOperation>>, String>,
     mappings: HashMap<String, Vec<u8>>,
 }
 
@@ -97,14 +100,22 @@ impl<'a> CanonicalReadService<'a> {
         snapshot: &CanonicalReadSnapshot,
         issue_id: &str,
     ) -> Result<pb::IssueWithSync, CanonicalServiceError> {
+        Self::get_issue_and_sync_from_snapshot(tracker, snapshot, issue_id)
+            .await
+            .map(|(_, issue_with_sync)| issue_with_sync)
+    }
+
+    /// Also returns the tracker Issue so callers needing its relations do not
+    /// read it a second time.
+    pub(crate) async fn get_issue_and_sync_from_snapshot(
+        tracker: &Tracker,
+        snapshot: &CanonicalReadSnapshot,
+        issue_id: &str,
+    ) -> Result<(crate::model::Issue, pb::IssueWithSync), CanonicalServiceError> {
         let id = Uuid::parse_str(issue_id).map_err(|_| CanonicalServiceError::InvalidIssueId)?;
-        let issue = tracker.get(id).await?;
-        let backend_lookback_ready = tracker
-            .ready(now_seconds())
-            .await?
-            .iter()
-            .any(|ready| ready.id == issue.id);
-        Self::compose(issue_proto(&issue), snapshot, backend_lookback_ready)
+        let (issue, backend_lookback_ready) = tracker.get_with_ready(id, now_seconds()).await?;
+        let issue_with_sync = Self::compose(issue_proto(&issue), snapshot, backend_lookback_ready)?;
+        Ok((issue, issue_with_sync))
     }
 
     pub(crate) async fn list_issues_with_sync(
@@ -226,14 +237,11 @@ impl<'a> CanonicalReadService<'a> {
         snapshot: &CanonicalReadSnapshot,
         backend_lookback_ready: bool,
     ) -> Result<pb::IssueWithSync, CanonicalServiceError> {
-        let sync_operations = snapshot
-            .operations
-            .iter()
-            .map(SyncOperation::try_from)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| CanonicalServiceError::Sync(error.to_string()))?;
-        let selection =
-            sync::select_sync_state(&sync_operations, &issue.issue_id, snapshot.generation);
+        let selection = sync::select_sync_state(
+            snapshot.sync_operations_for(&issue.issue_id)?,
+            &issue.issue_id,
+            snapshot.generation,
+        );
         let sync_state = sync_state_proto(selection.state);
         let state = canonical_state(issue.state).ok_or_else(|| {
             CanonicalServiceError::Sync("canonical issue state is invalid".into())
@@ -326,11 +334,49 @@ impl CanonicalReadSnapshot {
             rows.collect::<Result<HashMap<_, _>, rusqlite::Error>>()
                 .map_err(ManagerStorageError::from)
         })?;
-        Ok(CanonicalReadSnapshot {
-            generation: storage.generation(),
+        Ok(CanonicalReadSnapshot::new(
+            storage.generation(),
             operations,
             mappings,
-        })
+        ))
+    }
+
+    fn new(
+        generation: u64,
+        operations: Vec<pb::DurableOperation>,
+        mappings: HashMap<String, Vec<u8>>,
+    ) -> Self {
+        let sync_operations_by_subject = operations
+            .iter()
+            .map(SyncOperation::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .map(|operations| {
+                let mut by_subject = HashMap::<String, Vec<SyncOperation>>::new();
+                for operation in operations.into_iter().filter(|op| op.affects_ready) {
+                    by_subject
+                        .entry(operation.sync_subject.clone())
+                        .or_default()
+                        .push(operation);
+                }
+                by_subject
+            })
+            .map_err(|error| error.to_string());
+        CanonicalReadSnapshot {
+            generation,
+            sync_operations_by_subject,
+            mappings,
+        }
+    }
+
+    fn sync_operations_for(
+        &self,
+        subject: &str,
+    ) -> Result<&[SyncOperation], CanonicalServiceError> {
+        let by_subject = self
+            .sync_operations_by_subject
+            .as_ref()
+            .map_err(|error| CanonicalServiceError::Sync(error.clone()))?;
+        Ok(by_subject.get(subject).map_or(&[], Vec::as_slice))
     }
 }
 
@@ -632,6 +678,100 @@ mod tests {
             }),
             lookback_ready,
             ..Default::default()
+        }
+    }
+
+    fn sync_operation(
+        operation_id: &str,
+        subject: &str,
+        state: pb::DurableOperationState,
+        affects_ready: bool,
+    ) -> pb::DurableOperation {
+        pb::DurableOperation {
+            operation_id: operation_id.into(),
+            method: "manager_update_issue".into(),
+            idempotency_scope: operation_id.into(),
+            request_digest: operation_id.into(),
+            state: state as i32,
+            generation: 1,
+            manager_sequence: 1,
+            affects_ready,
+            sync_subject: Some(subject.into()),
+            scope: Some(pb::durable_operation::Scope::IssueId(subject.into())),
+            ..Default::default()
+        }
+    }
+
+    fn sync_view(view: &pb::IssueWithSync) -> (i32, Vec<String>) {
+        let sync = view.sync.as_ref().expect("sync view");
+        (sync.sync_state, sync.operation_ids.clone())
+    }
+
+    #[test]
+    fn compose_uses_only_ready_affecting_operations_of_the_issue_subject() {
+        let operations = vec![
+            sync_operation("op-a1", "issue-a", pb::DurableOperationState::Pending, true),
+            sync_operation("op-a2", "issue-a", pb::DurableOperationState::Failed, false),
+            sync_operation(
+                "op-b1",
+                "issue-b",
+                pb::DurableOperationState::Committed,
+                true,
+            ),
+            sync_operation("op-x1", "issue-x", pb::DurableOperationState::Failed, true),
+        ];
+        let snapshot = CanonicalReadSnapshot::new(5, operations.clone(), HashMap::new());
+
+        for issue_id in ["issue-a", "issue-b", "issue-c"] {
+            let composed =
+                CanonicalReadService::compose(issue(issue_id, 1, "t"), &snapshot, true).unwrap();
+            // Composing against only this subject's operations must give the same view.
+            let own = operations
+                .iter()
+                .filter(|operation| operation.sync_subject.as_deref() == Some(issue_id))
+                .cloned()
+                .collect();
+            let isolated = CanonicalReadSnapshot::new(5, own, HashMap::new());
+            assert_eq!(
+                composed,
+                CanonicalReadService::compose(issue(issue_id, 1, "t"), &isolated, true).unwrap()
+            );
+        }
+        // The fixture has no backend marker, so the pending chain head is unverifiable.
+        let touched =
+            CanonicalReadService::compose(issue("issue-a", 1, "t"), &snapshot, true).unwrap();
+        assert_eq!(
+            sync_view(&touched),
+            (pb::SyncState::Unconfirmed as i32, vec!["op-a1".to_string()])
+        );
+        let untouched =
+            CanonicalReadService::compose(issue("issue-c", 1, "t"), &snapshot, true).unwrap();
+        assert_eq!(
+            sync_view(&untouched),
+            (pb::SyncState::Confirmed as i32, Vec::new())
+        );
+    }
+
+    #[test]
+    fn compose_fails_when_any_persisted_operation_is_malformed() {
+        let snapshot = CanonicalReadSnapshot::new(
+            5,
+            vec![
+                sync_operation("op-a1", "issue-a", pb::DurableOperationState::Pending, true),
+                sync_operation(
+                    "op-bad",
+                    "issue-x",
+                    pb::DurableOperationState::Unspecified,
+                    false,
+                ),
+            ],
+            HashMap::new(),
+        );
+        for issue_id in ["issue-a", "issue-c"] {
+            assert!(matches!(
+                CanonicalReadService::compose(issue(issue_id, 1, "t"), &snapshot, true),
+                Err(CanonicalServiceError::Sync(_))
+            ));
         }
     }
 

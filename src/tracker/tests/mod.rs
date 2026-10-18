@@ -3,6 +3,22 @@ mod tracker_recovery;
 
 use crate::v1;
 
+pub(crate) fn verified_completion_report(
+    summary: &str,
+) -> v1::transition_issue_args::TerminalReport {
+    v1::transition_issue_args::TerminalReport::Completion(v1::CompletionReport {
+        result: Some(v1::completion_report::Result::Verified(
+            v1::VerifiedCompletion {
+                evidence: vec![v1::CompletionEvidence {
+                    kind: v1::CompletionEvidenceKind::OtherEvidence as i32,
+                    summary: summary.into(),
+                    uri: None,
+                }],
+            },
+        )),
+    })
+}
+
 pub(crate) fn awaiting_review_completion(run_id: &str) -> v1::AwaitingReviewCompletion {
     v1::AwaitingReviewCompletion {
         run_id: run_id.into(),

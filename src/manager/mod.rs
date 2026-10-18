@@ -2023,17 +2023,10 @@ pub(crate) async fn dispatch_prepared_canonical_read(
             page_size_limits,
         } => {
             let backend_generation = tracker.current_read_generation();
-            let sync = canonical_service::CanonicalReadService::get_issue_with_sync_from_snapshot(
+            let read = canonical_service::CanonicalReadService::get_issue_and_sync_from_snapshot(
                 tracker, &snapshot, &issue_id,
             )
             .await;
-            let relations = match uuid::Uuid::parse_str(&issue_id) {
-                Ok(id) => tracker
-                    .get(id)
-                    .await
-                    .map_err(canonical_service::CanonicalServiceError::from),
-                Err(_) => Err(canonical_service::CanonicalServiceError::InvalidIssueId),
-            };
             let generation = snapshot.composite_generation(backend_generation);
             let snapshot_id = format!(
                 "issue-relations-{issue_id}-{}",
@@ -2057,9 +2050,9 @@ pub(crate) async fn dispatch_prepared_canonical_read(
                 })
                 .transpose();
             let boundary = tracker.validate_read_generation(backend_generation);
-            match (sync, relations, cursor, boundary) {
-                (Ok(issue), Ok(issue_with_relations), Ok(cursor), Ok(())) => {
-                    let mut relations = issue_with_relations.relations;
+            match (read, cursor, boundary) {
+                (Ok((issue, issue_with_sync)), Ok(cursor), Ok(())) => {
+                    let mut relations = issue.relations;
                     relations.sort_by(|left, right| left.relation_id.cmp(&right.relation_id));
                     let (start, end, more) = pagination::paginate(
                         &relations,
@@ -2079,7 +2072,7 @@ pub(crate) async fn dispatch_prepared_canonical_read(
                     pb::GetIssueRelationsResult {
                         outcome: Some(pb::get_issue_relations_result::Outcome::Success(
                             pb::IssueRelationsWithSync {
-                                issue: Some(issue),
+                                issue: Some(issue_with_sync),
                                 relations: relations[start..end]
                                     .iter()
                                     .map(crate::tracker::conversion::relation_proto)
@@ -2094,13 +2087,11 @@ pub(crate) async fn dispatch_prepared_canonical_read(
                     }
                     .encode_to_vec()
                 }
-                (Err(error), _, _, _) | (_, Err(error), _, _) => {
-                    gateway::read_result::<pb::GetIssueRelationsResult>(
-                        manager_service_error(error.into()),
-                        0,
-                    )
-                }
-                (_, _, Err(error), _) | (_, _, _, Err(error)) => {
+                (Err(error), _, _) => gateway::read_result::<pb::GetIssueRelationsResult>(
+                    manager_service_error(error.into()),
+                    0,
+                ),
+                (_, Err(error), _) | (_, _, Err(error)) => {
                     let manager_error = match error {
                         error @ crate::error::TrackerError::InvalidPageToken => gateway_error(
                             pb::ManagerErrorCode::InvalidPageToken,

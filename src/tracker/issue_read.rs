@@ -323,22 +323,54 @@ impl Tracker {
         Ok(entries)
     }
 
-    /// Update the canonical title while preserving the same revision/marker rules as other writes.
+    /// Read one Issue with its dependency relations resolved.
     pub async fn get(&self, id: Uuid) -> Result<Issue, TrackerError> {
         self.ensure_healthy()?;
         let mut replica = self.inner.lock().await;
-        let depmap = replica.dependency_map(true).await?;
+        let depmap = cached_dependency_map(&mut replica).await?;
+        self.issue_from_replica(&mut replica, &depmap, id).await
+    }
+
+    /// Read several Issues under one replica lock and one dependency-map
+    /// rebuild. Rebuilding the map scans the whole working set, so calling
+    /// [`Self::get`] per Issue is quadratic in the number of Issues.
+    ///
+    /// Results are in request order and per-Issue failures stay per item, so
+    /// callers can classify them exactly as they would individual `get` calls.
+    pub(crate) async fn get_many(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<Vec<Result<Issue, TrackerError>>, TrackerError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.ensure_healthy()?;
+        let mut replica = self.inner.lock().await;
+        let depmap = cached_dependency_map(&mut replica).await?;
+        let mut issues = Vec::with_capacity(ids.len());
+        for &id in ids {
+            issues.push(self.issue_from_replica(&mut replica, &depmap, id).await);
+        }
+        Ok(issues)
+    }
+
+    async fn issue_from_replica(
+        &self,
+        replica: &mut Replica<SqliteStorage>,
+        depmap: &taskchampion::DependencyMap,
+        id: Uuid,
+    ) -> Result<Issue, TrackerError> {
         let task = replica
             .get_task(id)
             .await?
             .ok_or(TrackerError::NotFound(id))?;
-        self.issue_from_task_with_dependencies(&task, Some(&depmap))
+        self.issue_from_task_with_dependencies(&task, Some(depmap))
     }
 
     pub async fn list(&self) -> Result<Vec<Issue>, TrackerError> {
         self.ensure_healthy()?;
         let mut replica = self.inner.lock().await;
-        let depmap = replica.dependency_map(true).await?;
+        let depmap = cached_dependency_map(&mut replica).await?;
         let tasks = replica.all_tasks().await?;
         tasks
             .values()
@@ -514,7 +546,7 @@ impl Tracker {
         self.ensure_healthy()?;
         let _admission = self.admission.read().await;
         let mut replica = self.inner.lock().await;
-        let depmap = replica.dependency_map(true).await?;
+        let depmap = cached_dependency_map(&mut replica).await?;
         let mut tasks: Vec<_> = replica
             .all_tasks()
             .await?
@@ -528,34 +560,45 @@ impl Tracker {
         });
         let mut ready = Vec::new();
         for task in tasks {
-            // A partial or expired ownership tuple is never available work.
-            // Recovery is a write and must happen before a later claim.
+            // Checked before decoding so a leased task's projection is never
+            // read; `task_is_ready` repeats it for single-Issue reads.
             if lease_state(&task, now) != LeaseState::None {
                 continue;
             }
             let issue = self.issue_from_task_with_dependencies(&task, Some(&depmap))?;
-            if !matches!(issue.state, IssueState::Open) {
-                continue;
-            }
-            if issue.confirmation_status != v1::ConfirmationStatus::Confirmed as i32 {
-                continue;
-            }
-            let task = replica
-                .get_task(issue.id)
-                .await?
-                .ok_or(TrackerError::NotFound(issue.id))?;
-            if !task.is_blocked() {
+            if task_is_ready(&mut replica, &task, &issue, now).await? {
                 ready.push(issue);
             }
         }
         Ok(ready)
     }
 
-    /// Reconcile one expired claim through the canonical write path.
+    /// Read one Issue together with its `ready` membership without scanning
+    /// every task, using the same readiness rules as [`Self::ready`].
+    pub(crate) async fn get_with_ready(
+        &self,
+        id: Uuid,
+        now: u64,
+    ) -> Result<(Issue, bool), TrackerError> {
+        self.ensure_healthy()?;
+        let _admission = self.admission.read().await;
+        let mut replica = self.inner.lock().await;
+        let depmap = cached_dependency_map(&mut replica).await?;
+        let task = replica
+            .get_task(id)
+            .await?
+            .ok_or(TrackerError::NotFound(id))?;
+        let issue = self.issue_from_task_with_dependencies(&task, Some(&depmap))?;
+        let ready = task_is_ready(&mut replica, &task, &issue, now).await?;
+        Ok((issue, ready))
+    }
+
+    /// Serialize every Issue and its history into a JSON export bundle, sorted
+    /// so the output is deterministic for the same tracker state.
     pub async fn export(&self) -> Result<Vec<u8>, TrackerError> {
         self.ensure_healthy()?;
         let mut replica = self.inner.lock().await;
-        let depmap = replica.dependency_map(true).await?;
+        let depmap = cached_dependency_map(&mut replica).await?;
         let tasks = replica.all_tasks().await?;
         let mut issues = Vec::new();
         let mut history = Vec::new();
@@ -606,4 +649,43 @@ fn persisted_actor_context(
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
     }
+}
+
+/// Reads reuse TaskChampion's cached dependency map instead of forcing a
+/// rebuild, which scans the whole working set. The cache is safe because this
+/// process holds the exclusive storage lock, every write goes through
+/// `commit_operations` (which drops the cache), and restore/reopen replaces
+/// the replica.
+async fn cached_dependency_map(
+    replica: &mut Replica<SqliteStorage>,
+) -> Result<std::sync::Arc<taskchampion::DependencyMap>, TrackerError> {
+    Ok(replica.dependency_map(false).await?)
+}
+
+/// The single readiness rule shared by `ready` and `get_with_ready`: an
+/// identified Issue with no ownership tuple (a partial or expired lease needs
+/// a recovery write first), open, confirmed, and not blocked.
+async fn task_is_ready(
+    replica: &mut Replica<SqliteStorage>,
+    task: &taskchampion::Task,
+    issue: &Issue,
+    now: u64,
+) -> Result<bool, TrackerError> {
+    if task.get_user_defined_attribute(ID_KEY).is_none()
+        || lease_state(task, now) != LeaseState::None
+        || !matches!(issue.state, IssueState::Open)
+        || issue.confirmation_status != v1::ConfirmationStatus::Confirmed as i32
+    {
+        return Ok(false);
+    }
+    // Blocking is looked up by the logical Issue ID; the held task already is
+    // that task unless its physical UUID differs from the logical ID.
+    if task.get_uuid() == issue.id {
+        return Ok(!task.is_blocked());
+    }
+    let task = replica
+        .get_task(issue.id)
+        .await?
+        .ok_or(TrackerError::NotFound(issue.id))?;
+    Ok(!task.is_blocked())
 }

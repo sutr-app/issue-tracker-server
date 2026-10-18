@@ -1559,17 +1559,7 @@ async fn administrative_completion_without_claim_reports_no_ownership_repair() {
         .create("admin completion without claim", "no lease")
         .await
         .unwrap();
-    let report = v1::transition_issue_args::TerminalReport::Completion(v1::CompletionReport {
-        result: Some(v1::completion_report::Result::Verified(
-            v1::VerifiedCompletion {
-                evidence: vec![v1::CompletionEvidence {
-                    kind: v1::CompletionEvidenceKind::OtherEvidence as i32,
-                    summary: "completed without a claim".into(),
-                    uri: None,
-                }],
-            },
-        )),
-    });
+    let report = super::verified_completion_report("completed without a claim");
 
     let completed = tracker
         .admin_terminate(
@@ -1630,17 +1620,7 @@ async fn administrative_completion_with_inconsistent_claim_resolution_is_atomic(
             .unwrap();
         replica.commit_operations(ops).await.unwrap();
     }
-    let report = v1::transition_issue_args::TerminalReport::Completion(v1::CompletionReport {
-        result: Some(v1::completion_report::Result::Verified(
-            v1::VerifiedCompletion {
-                evidence: vec![v1::CompletionEvidence {
-                    kind: v1::CompletionEvidenceKind::OtherEvidence as i32,
-                    summary: "completed after explicit lease repair".into(),
-                    uri: None,
-                }],
-            },
-        )),
-    });
+    let report = super::verified_completion_report("completed after explicit lease repair");
 
     let completed = tracker
         .admin_terminate_with_overrides(
@@ -1873,17 +1853,7 @@ async fn administrative_completion_override_records_dependency_observations() {
         )
         .await
         .unwrap();
-    let report = v1::transition_issue_args::TerminalReport::Completion(v1::CompletionReport {
-        result: Some(v1::completion_report::Result::Verified(
-            v1::VerifiedCompletion {
-                evidence: vec![v1::CompletionEvidence {
-                    kind: v1::CompletionEvidenceKind::OtherEvidence as i32,
-                    summary: "override evidence".into(),
-                    uri: None,
-                }],
-            },
-        )),
-    });
+    let report = super::verified_completion_report("override evidence");
 
     let completed = tracker
         .admin_terminate_with_overrides(
@@ -3103,4 +3073,259 @@ async fn awaiting_review_completion_rejects_values_beyond_each_bound_without_mut
         assert_eq!(unchanged.state, IssueState::InProgress, "{key}");
         assert!(unchanged.lease_owner.is_some(), "{key}");
     }
+}
+
+#[tokio::test]
+async fn get_many_matches_get_in_request_order_with_dependencies() {
+    let root = TempDir::new().unwrap();
+    let tracker = Tracker::open(root.path()).await.unwrap();
+    let first = tracker.create("get-many-1", "first").await.unwrap();
+    let blocker = tracker.create("get-many-2", "blocker").await.unwrap();
+    let blocked = tracker.create("get-many-3", "blocked").await.unwrap();
+    tracker
+        .relate(
+            blocker.id,
+            RelationKind::Blocks,
+            blocked.id,
+            blocker.revision,
+            blocked.revision,
+            "get-many-relate",
+        )
+        .await
+        .unwrap();
+
+    let ids = [blocked.id, first.id, blocker.id];
+    let batch = tracker.get_many(&ids).await.unwrap();
+
+    assert_eq!(batch.len(), ids.len());
+    for (id, result) in ids.iter().zip(&batch) {
+        assert_eq!(result.as_ref().unwrap(), &tracker.get(*id).await.unwrap());
+    }
+    // The dependency map must be applied, not just the raw task fields.
+    assert!(
+        batch[0]
+            .as_ref()
+            .unwrap()
+            .relations
+            .iter()
+            .any(|relation| relation.kind == RelationKind::Blocks && relation.source == blocker.id)
+    );
+}
+
+#[tokio::test]
+async fn get_many_reports_missing_issues_per_item() {
+    let root = TempDir::new().unwrap();
+    let tracker = Tracker::open(root.path()).await.unwrap();
+    let issue = tracker.create("get-many-missing", "present").await.unwrap();
+    let missing = Uuid::new_v4();
+
+    let batch = tracker.get_many(&[missing, issue.id]).await.unwrap();
+
+    assert_eq!(batch.len(), 2);
+    assert!(matches!(batch[0], Err(TrackerError::NotFound(id)) if id == missing));
+    assert_eq!(batch[1].as_ref().unwrap().id, issue.id);
+}
+
+#[tokio::test]
+async fn get_many_handles_empty_and_duplicate_ids() {
+    let root = TempDir::new().unwrap();
+    let tracker = Tracker::open(root.path()).await.unwrap();
+    assert!(tracker.get_many(&[]).await.unwrap().is_empty());
+
+    let issue = tracker.create("get-many-dup", "duplicate").await.unwrap();
+    let batch = tracker.get_many(&[issue.id, issue.id]).await.unwrap();
+    assert_eq!(batch.len(), 2);
+    for result in batch {
+        assert_eq!(result.unwrap().id, issue.id);
+    }
+}
+
+#[tokio::test]
+async fn reads_observe_dependency_changes_after_a_warm_dependency_cache() {
+    let root = TempDir::new().unwrap();
+    let tracker = Tracker::open(root.path()).await.unwrap();
+    let blocker = tracker
+        .create("warm-cache-blocker", "blocker")
+        .await
+        .unwrap();
+    let blocked = tracker
+        .create("warm-cache-blocked", "blocked")
+        .await
+        .unwrap();
+    let blocks_from = |issue: &Issue, source: Uuid| {
+        issue
+            .relations
+            .iter()
+            .any(|relation| relation.kind == RelationKind::Blocks && relation.source == source)
+    };
+    let ready_ids =
+        |issues: Vec<Issue>| issues.into_iter().map(|issue| issue.id).collect::<Vec<_>>();
+
+    // Warm every read path before each write so a stale cached map would surface.
+    assert!(!blocks_from(
+        &tracker.get(blocked.id).await.unwrap(),
+        blocker.id
+    ));
+    assert!(ready_ids(tracker.ready(0).await.unwrap()).contains(&blocked.id));
+    tracker
+        .relate(
+            blocker.id,
+            RelationKind::Blocks,
+            blocked.id,
+            blocker.revision,
+            blocked.revision,
+            "warm-cache-relate",
+        )
+        .await
+        .unwrap();
+    assert!(blocks_from(
+        &tracker.get(blocked.id).await.unwrap(),
+        blocker.id
+    ));
+    let listed = tracker.list().await.unwrap();
+    let listed_blocked = listed.iter().find(|issue| issue.id == blocked.id).unwrap();
+    assert!(blocks_from(listed_blocked, blocker.id));
+    assert!(!ready_ids(tracker.ready(0).await.unwrap()).contains(&blocked.id));
+    let batch = tracker.get_many(&[blocked.id]).await.unwrap();
+    assert!(blocks_from(batch[0].as_ref().unwrap(), blocker.id));
+
+    // Completing the blocker changes dependency pendency without touching the blocked task.
+    let blocker = tracker.get(blocker.id).await.unwrap();
+    let report = super::verified_completion_report("blocker done");
+    tracker
+        .admin_terminate(
+            blocker.id,
+            IssueState::Done,
+            blocker.revision,
+            "warm-cache-complete-blocker",
+            "administrator",
+            "blocker done",
+            &report,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+    assert!(ready_ids(tracker.ready(0).await.unwrap()).contains(&blocked.id));
+
+    let blocker = tracker.get(blocker.id).await.unwrap();
+    let blocked = tracker.get(blocked.id).await.unwrap();
+    tracker
+        .unrelate(
+            blocker.id,
+            RelationKind::Blocks,
+            blocked.id,
+            blocker.revision,
+            blocked.revision,
+            "warm-cache-unrelate",
+        )
+        .await
+        .unwrap();
+    assert!(!blocks_from(
+        &tracker.get(blocked.id).await.unwrap(),
+        blocker.id
+    ));
+}
+
+#[tokio::test]
+async fn get_with_ready_agrees_with_ready_list_membership() {
+    let root = TempDir::new().unwrap();
+    let tracker = Tracker::open(root.path()).await.unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let open = tracker.create("with-ready-open", "open").await.unwrap();
+    let blocker = tracker
+        .create("with-ready-blocker", "blocker")
+        .await
+        .unwrap();
+    let blocked = tracker
+        .create("with-ready-blocked", "blocked")
+        .await
+        .unwrap();
+    tracker
+        .relate(
+            blocker.id,
+            RelationKind::Blocks,
+            blocked.id,
+            blocker.revision,
+            blocked.revision,
+            "with-ready-relate",
+        )
+        .await
+        .unwrap();
+    let claimed = tracker
+        .create("with-ready-claimed", "claimed")
+        .await
+        .unwrap();
+    tracker
+        .claim(
+            claimed.id,
+            "worker",
+            claimed.revision,
+            600,
+            "with-ready-claim",
+        )
+        .await
+        .unwrap();
+    let deferred = tracker
+        .create("with-ready-deferred", "deferred")
+        .await
+        .unwrap();
+    tracker
+        .transition(
+            deferred.id,
+            IssueState::Deferred,
+            deferred.revision,
+            "with-ready-defer",
+            None,
+        )
+        .await
+        .unwrap();
+    let unreviewed = tracker
+        .create_with_draft(
+            Uuid::new_v4(),
+            "with-ready-unreviewed",
+            &v1::IssueDraft {
+                title: "unreviewed".into(),
+                kind: v1::IssueKind::Task as i32,
+                priority: v1::IssuePriority::P2 as i32,
+                creation_basis: v1::CreationBasis::Explicit as i32,
+                confirmation_status: v1::ConfirmationStatus::Unreviewed as i32,
+                initial_state: v1::IssueState::Open as i32,
+                ..Default::default()
+            },
+            "human",
+            "with-ready-unreviewed",
+        )
+        .await
+        .unwrap();
+
+    let ready_ids = tracker
+        .ready(now)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|issue| issue.id)
+        .collect::<Vec<_>>();
+    let expectations = [
+        (open.id, true),
+        (blocker.id, true),
+        (blocked.id, false),
+        (claimed.id, false),
+        (deferred.id, false),
+        (unreviewed.id, false),
+    ];
+    for (id, expected) in expectations {
+        let (issue, ready) = tracker.get_with_ready(id, now).await.unwrap();
+        assert_eq!(issue, tracker.get(id).await.unwrap());
+        assert_eq!(ready, expected, "{id}");
+        assert_eq!(ready, ready_ids.contains(&id), "{id}");
+    }
+    let missing = Uuid::new_v4();
+    assert!(matches!(
+        tracker.get_with_ready(missing, now).await,
+        Err(TrackerError::NotFound(id)) if id == missing
+    ));
 }

@@ -77,12 +77,41 @@ impl ReviewCandidateReadSnapshot {
     }
 }
 
+/// The token-validation fields every review read needs, with no candidates.
+fn base_snapshot(
+    storage: &ManagerStorage,
+    args: &pb::ListReviewCandidatesArgs,
+    page_size_limits: PageSizeLimits,
+) -> ReviewCandidateReadSnapshot {
+    ReviewCandidateReadSnapshot {
+        generation: storage.generation(),
+        candidates: Vec::new(),
+        pending_candidates: HashSet::new(),
+        mappings: HashMap::new(),
+        associated_issues: HashMap::new(),
+        missing_associated_issues: HashSet::new(),
+        unknown_state_associated_issues: HashSet::new(),
+        page_token_secret: storage.list_issues_with_sync_page_token_secret().to_owned(),
+        page_size_limits,
+        query_fingerprint: query_fingerprint(args),
+    }
+}
+
 pub(crate) fn snapshot_from_storage(
     storage: &ManagerStorage,
     args: &pb::ListReviewCandidatesArgs,
     page_size_limits: PageSizeLimits,
     manager_contract_fingerprint: &str,
 ) -> Result<ReviewCandidateReadSnapshot, ReviewCandidateReadError> {
+    let has_page_token = args
+        .page
+        .as_ref()
+        .is_some_and(|page| page.page_token.is_some());
+    // Continuation pages are served from the pinned snapshot, so decoding
+    // every candidate again would be discarded work.
+    if has_page_token {
+        return Ok(base_snapshot(storage, args, page_size_limits));
+    }
     let stored_candidates: Vec<(Vec<u8>, String, String)> = storage.read(|connection| {
         let mut statement = connection.prepare(
             "SELECT payload, payload_schema, payload_digest
@@ -132,16 +161,10 @@ pub(crate) fn snapshot_from_storage(
     let mappings = read_mappings(storage, &auto_ids, manager_contract_fingerprint)?;
 
     Ok(ReviewCandidateReadSnapshot {
-        generation: storage.generation(),
         candidates,
         pending_candidates,
         mappings,
-        associated_issues: HashMap::new(),
-        missing_associated_issues: HashSet::new(),
-        unknown_state_associated_issues: HashSet::new(),
-        page_token_secret: storage.list_issues_with_sync_page_token_secret().to_owned(),
-        page_size_limits,
-        query_fingerprint: query_fingerprint(args),
+        ..base_snapshot(storage, args, page_size_limits)
     })
 }
 
@@ -312,37 +335,34 @@ async fn populate_associated_issue_snapshot(
     snapshot: &mut ReviewCandidateReadSnapshot,
 ) -> Result<(), ReviewCandidateReadError> {
     let mut visited = HashSet::new();
-    for mapping in snapshot
+    let (issue_ids, ids): (Vec<String>, Vec<Uuid>) = snapshot
         .mappings
         .values()
         .filter_map(|observation| match observation {
             MappingObservation::Valid(mapping) => Some(mapping),
             MappingObservation::Missing | MappingObservation::Invalid => None,
         })
-    {
-        if !visited.insert(mapping.issue_id.clone()) {
-            continue;
-        }
-        let Ok(id) = Uuid::parse_str(&mapping.issue_id) else {
-            continue;
-        };
-        match tracker.get(id).await {
+        .filter(|mapping| visited.insert(mapping.issue_id.as_str()))
+        .filter_map(|mapping| {
+            Uuid::parse_str(&mapping.issue_id)
+                .ok()
+                .map(|id| (mapping.issue_id.clone(), id))
+        })
+        .unzip();
+    // Batched so the first page stays linear in the number of mapped Issues.
+    let issues = tracker.get_many(&ids).await?;
+    for (issue_id, issue) in issue_ids.into_iter().zip(issues) {
+        match issue {
             Ok(issue) => {
-                snapshot
-                    .associated_issues
-                    .insert(mapping.issue_id.clone(), issue);
+                snapshot.associated_issues.insert(issue_id, issue);
             }
             Err(TrackerError::NotFound(_)) => {
-                snapshot
-                    .missing_associated_issues
-                    .insert(mapping.issue_id.clone());
+                snapshot.missing_associated_issues.insert(issue_id);
             }
             Err(TrackerError::InvalidState(message))
                 if message.to_ascii_lowercase().contains("unknown state") =>
             {
-                snapshot
-                    .unknown_state_associated_issues
-                    .insert(mapping.issue_id.clone());
+                snapshot.unknown_state_associated_issues.insert(issue_id);
             }
             Err(error) => return Err(ReviewCandidateReadError::Tracker(error)),
         }
