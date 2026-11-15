@@ -17,9 +17,36 @@ The listener address is configurable; its default is a loopback address. A proxy
 - **IssueGateway**: A reduced surface available when manager settings are on. Callers do not send manager write context, actor fields, or lease handles. Create synthesizes evidence on the server; claim returns a process-local capability id. The contract lives in [`issue_gateway.proto`](protobuf/rpc/v1/issue_gateway.proto).
 - **IssueExtract**: When manager settings are on, evaluates the complete candidate input under a versioned structured policy. It records an immutable policy snapshot and truncation data in an ExtractionRun, and may register an `UNREVIEWED` issue. Disabled extraction returns a non-persistent skipped outcome. It does not run an LLM. The contract lives in [`issue_extract.proto`](protobuf/rpc/v1/issue_extract.proto).
 
+## Install
+
+Prebuilt binaries are attached to each [GitHub Release](https://github.com/sutr-app/issue-tracker-server/releases).
+
+| Asset | Requirements |
+|---|---|
+| `issue-tracker-server-x86_64-unknown-linux-musl.tar.gz` | Linux on x86_64. Statically linked; no libc requirement. |
+| `issue-tracker-server-aarch64-unknown-linux-musl.tar.gz` | Linux on aarch64. Statically linked; no libc requirement. |
+| `issue-tracker-server-aarch64-apple-darwin.tar.gz` | macOS 11 or later on Apple Silicon. |
+
+Each archive contains the `issue-tracker-server` binary, the license, and the READMEs. Verify the download with `SHA256SUMS` from the same release, and optionally verify its build provenance with the GitHub CLI:
+
+```text
+sha256sum --ignore-missing -c SHA256SUMS
+gh attestation verify issue-tracker-server-<target>.tar.gz --repo sutr-app/issue-tracker-server
+tar -xzf issue-tracker-server-<target>.tar.gz
+issue-tracker-server-<target>/issue-tracker-server --version
+```
+
+On macOS, check the asset you downloaded with `shasum`:
+
+```text
+grep ' issue-tracker-server-aarch64-apple-darwin.tar.gz$' SHA256SUMS | shasum -a 256 -c
+```
+
+The macOS binary is ad-hoc signed and not notarized. If a browser download is blocked by Gatekeeper, download it with `curl` or remove the quarantine attribute with `xattr -d com.apple.quarantine`.
+
 ## Usage
 
-1. Build the server binary. A Rust toolchain supporting edition 2024 and `protoc` (Protocol Buffers compiler) are required.
+1. Install a release binary (see [Install](#install)) or build it. Building requires a Rust toolchain supporting edition 2024 and `protoc` (Protocol Buffers compiler).
 
    ```text
    cargo build --workspace --release

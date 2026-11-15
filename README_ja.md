@@ -17,9 +17,36 @@ server の listen address は設定できます。既定値は loopback address 
 - **IssueGateway**: manager 有効時に使う縮小面です。caller は manager write context、actor、lease handle を送りません。create はサーバが根拠を合成し、claim は過程メモリ上の capability id だけを返します。契約は [`issue_gateway.proto`](protobuf/rpc/v1/issue_gateway.proto) が正本です。
 - **IssueExtract**: manager 有効時に、全 Candidate 入力を versioned な構造化 policy で評価します。ExtractionRun には immutable な policy snapshot と切詰め情報を残し、条件を満たせば `UNREVIEWED` Issue を登録します。抽出無効時は永続化しない skipped outcome を返します。LLM は実行しません。契約は [`issue_extract.proto`](protobuf/rpc/v1/issue_extract.proto) が正本です。
 
+## インストール
+
+ビルド済み binary を各 [GitHub Release](https://github.com/sutr-app/issue-tracker-server/releases) に添付しています。
+
+| asset | 動作要件 |
+|---|---|
+| `issue-tracker-server-x86_64-unknown-linux-musl.tar.gz` | x86_64 の Linux。静的リンクのため libc の要件はありません。 |
+| `issue-tracker-server-aarch64-unknown-linux-musl.tar.gz` | aarch64 の Linux。静的リンクのため libc の要件はありません。 |
+| `issue-tracker-server-aarch64-apple-darwin.tar.gz` | Apple Silicon の macOS 11 以降。 |
+
+各 archive には `issue-tracker-server` binary、ライセンス、README が入っています。同じ release の `SHA256SUMS` で検証し、必要に応じて GitHub CLI で build provenance を検証してください。
+
+```text
+sha256sum --ignore-missing -c SHA256SUMS
+gh attestation verify issue-tracker-server-<target>.tar.gz --repo sutr-app/issue-tracker-server
+tar -xzf issue-tracker-server-<target>.tar.gz
+issue-tracker-server-<target>/issue-tracker-server --version
+```
+
+macOS では、取得した asset を `shasum` で検証します。
+
+```text
+grep ' issue-tracker-server-aarch64-apple-darwin.tar.gz$' SHA256SUMS | shasum -a 256 -c
+```
+
+macOS 版は ad-hoc 署名のみで公証していません。ブラウザで取得したファイルが Gatekeeper に拒否される場合は、`curl` で取得するか `xattr -d com.apple.quarantine` で quarantine 属性を外してください。
+
 ## 使い方
 
-1. server binary を build します。edition 2024 に対応した Rust toolchain と `protoc`（Protocol Buffers compiler）が必要です。
+1. release の binary をインストールする（[インストール](#インストール)を参照）か、build します。build には edition 2024 に対応した Rust toolchain と `protoc`（Protocol Buffers compiler）が必要です。
 
    ```text
    cargo build --workspace --release

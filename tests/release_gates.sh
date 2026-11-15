@@ -2,7 +2,6 @@
 set -euo pipefail
 
 runner_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-host_dir="$(cd "$runner_dir/.." && pwd)"
 temporary_dir="$(mktemp -d)"
 trap 'rm -rf "$temporary_dir"' EXIT
 
