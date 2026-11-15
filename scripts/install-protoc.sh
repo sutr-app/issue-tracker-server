@@ -9,6 +9,9 @@
 # Kept compatible with the bash 3.2 shipped with macOS.
 set -euo pipefail
 
+# shellcheck source=scripts/lib/verified-download.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/verified-download.sh"
+
 PROTOC_VERSION=36.2
 
 dest=${1-}
@@ -43,13 +46,7 @@ esac
 work=$(mktemp -d)
 trap 'rm -rf "${work}"' EXIT
 
-curl -fsSL -o "${work}/${asset}" "${base_url}/${asset}" || die "download failed: ${base_url}/${asset}"
-if command -v sha256sum >/dev/null; then
-  actual=$(sha256sum "${work}/${asset}" | awk '{ print $1 }')
-else
-  actual=$(shasum -a 256 "${work}/${asset}" | awk '{ print $1 }')
-fi
-[[ "${actual}" == "${sha256}" ]] || die "checksum mismatch for ${asset}: expected ${sha256}, got ${actual}"
+verified_download "${base_url}/${asset}" "${sha256}" "${work}/${asset}"
 
 mkdir -p "${dest}"
 unzip -q -o "${work}/${asset}" -d "${dest}"

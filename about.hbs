@@ -1,0 +1,24 @@
+{{!-- cargo-about only warns about crates whose license it cannot determine;
+the marker lines let scripts/generate-third-party-licenses.sh fail on them. --}}
+{{#each crates}}{{#if (eq license "Unknown")}}UNKNOWN-LICENSE: {{{package.name}}} {{{package.version}}}
+{{/if}}{{/each}}THIRD-PARTY SOFTWARE NOTICES
+
+issue-tracker-server includes the third-party Rust crates listed below. Each
+license is listed with the crates distributed under it, followed by its text.
+
+Overview:
+{{#each overview}}
+- {{{name}}} ({{{id}}}): {{count}} crates
+{{/each}}
+{{#each licenses}}
+
+================================================================================
+{{{name}}} ({{{id}}})
+
+Used by:
+{{#each used_by}}
+- {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} ({{{crate.repository}}}){{/if}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

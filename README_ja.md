@@ -27,7 +27,7 @@ server の listen address は設定できます。既定値は loopback address 
 | `issue-tracker-server-aarch64-unknown-linux-musl.tar.gz` | aarch64 の Linux。静的リンクのため libc の要件はありません。 |
 | `issue-tracker-server-aarch64-apple-darwin.tar.gz` | Apple Silicon の macOS 11 以降。 |
 
-各 archive には `issue-tracker-server` binary、ライセンス、README が入っています。同じ release の `SHA256SUMS` で検証し、必要に応じて GitHub CLI で build provenance を検証してください。
+各 archive には `issue-tracker-server` binary、ライセンス、README と、binary に含まれる第三者 crate の著作権表示とライセンス文をまとめた `THIRD-PARTY-LICENSES.txt` が入っています。同じ release の `SHA256SUMS` で検証し、必要に応じて GitHub CLI で build provenance を検証してください。
 
 ```text
 sha256sum --ignore-missing -c SHA256SUMS

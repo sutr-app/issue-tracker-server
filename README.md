@@ -27,7 +27,7 @@ Prebuilt binaries are attached to each [GitHub Release](https://github.com/sutr-
 | `issue-tracker-server-aarch64-unknown-linux-musl.tar.gz` | Linux on aarch64. Statically linked; no libc requirement. |
 | `issue-tracker-server-aarch64-apple-darwin.tar.gz` | macOS 11 or later on Apple Silicon. |
 
-Each archive contains the `issue-tracker-server` binary, the license, and the READMEs. Verify the download with `SHA256SUMS` from the same release, and optionally verify its build provenance with the GitHub CLI:
+Each archive contains the `issue-tracker-server` binary, the license, the READMEs, and `THIRD-PARTY-LICENSES.txt` with the copyright and license texts of the third-party crates linked into the binary. Verify the download with `SHA256SUMS` from the same release, and optionally verify its build provenance with the GitHub CLI:
 
 ```text
 sha256sum --ignore-missing -c SHA256SUMS

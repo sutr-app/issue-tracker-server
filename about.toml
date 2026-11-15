@@ -1,0 +1,32 @@
+accepted = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unlicense",
+    "BSL-1.0",
+    "0BSD",
+]
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "aarch64-apple-darwin",
+]
+ignore-dev-dependencies = true
+ignore-build-dependencies = true
+
+[private]
+ignore = true
+
+# command-utils declares no license field; its repository is MIT licensed.
+# The checksum pins the clarification to that LICENSE text.
+[command-utils.clarify]
+license = "MIT"
+
+[[command-utils.clarify.files]]
+path = "LICENSE"
+license = "MIT"
+checksum = "1144d2a2b2e309e5790361878d0360ca6845a197ebd728590e192fc0be055592"
